@@ -1,0 +1,6 @@
+(library
+ (inline_tests)
+ (name unnamed_programming_lang)
+ (libraries base menhir sedlex)
+ (preprocess
+  (pps ppx_inline_test)))
