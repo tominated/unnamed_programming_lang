@@ -1,6 +1,10 @@
+(menhir
+  (flags --table --dump)
+  (modules parser))
+
 (library
  (inline_tests)
  (name unnamed_programming_lang)
- (libraries base menhir sedlex)
+ (libraries base sedlex menhirLib)
  (preprocess
-  (pps ppx_inline_test)))
+  (pps ppx_inline_test sedlex.ppx)))
