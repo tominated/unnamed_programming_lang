@@ -1,5 +1,5 @@
 (menhir
-  (flags --table --dump)
+  (flags --table --dump --strict --explain)
   (modules parser))
 
 (library
