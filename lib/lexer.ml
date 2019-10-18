@@ -6,10 +6,10 @@ module I = Parser.MenhirInterpreter
 
 let newline = [%sedlex.regexp? '\r' | '\n' | "\r\n"]
 
-let ident = [%sedlex.regexp? Plus ('a'..'z'|'A'..'Z'|'0'..'9'|'_')]
+let ident_char = [%sedlex.regexp? ('a'..'z'|'A'..'Z'|'0'..'9'|'_')]
 let number = [%sedlex.regexp? Plus ('0'..'9'), Opt ('.', Plus '0'..'9')]
-let lident = [%sedlex.regexp? 'a'..'z', ident]
-let uident = [%sedlex.regexp? 'A'..'Z', ident]
+let lident = [%sedlex.regexp? 'a'..'z', Star ident_char]
+let uident = [%sedlex.regexp? 'A'..'Z', Star ident_char]
 let operator = [%sedlex.regexp? Chars "!@#$%^&*-_=+<>?/\\~"]
 
 let rec read_string buf lexbuf =
@@ -62,7 +62,8 @@ let rec token lexbuf =
   | uident -> p "uident,"; UIDENT (L.Utf8.lexeme lexbuf)
   | '"' -> p "string,"; read_string (Buffer.create 32) lexbuf
   | _ ->
-    let (s, _) = L.lexing_positions lexbuf in
-    failwith (Printf.sprintf "Something went wrong at character %i" s.pos_cnum)
+    let (s, e) = L.lexing_positions lexbuf in
+    p "\n";
+    failwith (Printf.sprintf "Something went wrong at character %i-%i" s.pos_cnum e.pos_cnum)
 
 let makeSupplier = L.with_tokenizer token

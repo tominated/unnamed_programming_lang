@@ -12,7 +12,8 @@ let fail lexbuf _ =
     (Sedlexing.lexeme_start lexbuf)
 
 let loop lexbuf result =
-  Parser.MenhirInterpreter.loop_handle succeed (fail lexbuf) supplier result
+  Parser.MenhirInterpreter.loop_handle
+    succeed (fail lexbuf) supplier result
 
 let () =
   let (pos, _) = Sedlexing.lexing_positions testBuf in
