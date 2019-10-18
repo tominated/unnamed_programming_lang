@@ -28,35 +28,39 @@ let rec read_string buf lexbuf =
   | eof -> failwith "String not terminated"
   | _ -> failwith ("Illegal string character:" ^ (L.Utf8.lexeme lexbuf))
 
+let p = Stdio.Out_channel.output_string Stdio.stdout
 
 let rec token lexbuf =
+  let (s, e) = L.lexing_positions lexbuf in
+  let debug = Printf.sprintf " %i-%i:" s.pos_cnum e.pos_cnum in
+  p debug;
   match%sedlex lexbuf with
-  | eof -> EOF
-  | white_space -> token lexbuf
-  | newline -> L.new_line lexbuf; token lexbuf
-  | number -> NUMBER (Float.of_string (L.Utf8.lexeme lexbuf))
-  | Plus lident -> LIDENT (L.Utf8.lexeme lexbuf)
-  | Plus uident -> UIDENT (L.Utf8.lexeme lexbuf)
-  | '"' -> read_string (Buffer.create 32) lexbuf
-  | '{' -> LBRACE
-  | '}' -> RBRACE
-  | '(' -> LPAREN
-  | ')' -> RPAREN
-  | '.' -> DOT
-  | ',' -> COMMA
-  | ':' -> COLON
-  | '|' -> PIPE
-  | '_' -> UNDERSCORE
-  | '=' -> EQUALS
-  | ';' -> SEMI
-  | "->" -> ARROW
-  | "fn" -> FN
-  | "let" -> LET
-  | "type" -> TYPE
-  | "in" -> IN
-  | "match" -> MATCH
-  | "with" -> WITH
-  | "as" -> AS
+  | eof -> p "eof,"; EOF
+  | Plus white_space -> p "ws,"; token lexbuf
+  | newline -> p "nl,"; L.new_line lexbuf; token lexbuf
+  | '{' -> p "{,"; LBRACE
+  | '}' -> p "},"; RBRACE
+  | '(' -> p "(,"; LPAREN
+  | ')' -> p "),"; RPAREN
+  | '.' -> p ".,"; DOT
+  | ',' -> p ",,"; COMMA
+  | ':' -> p ":,"; COLON
+  | '|' -> p "|,"; PIPE
+  | '_' -> p "|,"; UNDERSCORE
+  | '=' -> p "=,"; EQUALS
+  | ';' -> p ";,"; SEMI
+  | "->" -> p "->,"; ARROW
+  | "fn" -> p "fn,"; FN
+  | "let" -> p "let,"; LET
+  | "type" -> p "type,"; TYPE
+  | "in" -> p "in,"; IN
+  | "match" -> p "match,"; MATCH
+  | "with" -> p "with,"; WITH
+  | "as" -> p "as,"; AS
+  | number -> p "num,"; NUMBER (Float.of_string (L.Utf8.lexeme lexbuf))
+  | lident -> p "lident,"; LIDENT (L.Utf8.lexeme lexbuf)
+  | uident -> p "uident,"; UIDENT (L.Utf8.lexeme lexbuf)
+  | '"' -> p "string,"; read_string (Buffer.create 32) lexbuf
   | _ ->
     let (s, _) = L.lexing_positions lexbuf in
     failwith (Printf.sprintf "Something went wrong at character %i" s.pos_cnum)

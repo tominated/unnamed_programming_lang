@@ -5,6 +5,6 @@
 (library
  (inline_tests)
  (name unnamed_programming_lang)
- (libraries base sedlex menhirLib)
+ (libraries base stdio sedlex menhirLib)
  (preprocess
   (pps ppx_inline_test sedlex.ppx)))
