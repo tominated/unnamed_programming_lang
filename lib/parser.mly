@@ -8,17 +8,26 @@
 %token <string> UIDENT (* Uppercase identifier *)
 %token <float> NUMBER
 %token <string> STRING
-%token FN LET IN MATCH WITH AS
-%token LBRACE RBRACE LPAREN RPAREN
-%token SEP
-%token ARROW EQUALS PIPE DOT COLON COMMA UNDERSCORE
+%token FN LET TYPE IN MATCH WITH AS
+%token LBRACE "{"
+%token RBRACE "}"
+%token LPAREN "("
+%token RPAREN ")"
+%token ARROW "->"
+%token EQUALS "="
+%token PIPE "|"
+%token DOT "."
+%token COLON ":"
+%token COMMA ","
+%token UNDERSCORE "_"
+%token SEMI
 %token EOF
 
 %start expr_eof
 %type <Syntax.expression> expr_eof
 
-%start typedef
-%type <Syntax.typedef> typedef
+%start type_signature_eof
+%type <Syntax.type_signature> type_signature_eof
 
 %%
 
@@ -26,11 +35,11 @@ expr_eof:
   | expr EOF { $1 }
 
 expr:
-  | expr_ SEP { located $1 $loc }
+  | expr_ SEMI { located $1 $loc }
 
 expr_:
   /* () */
-  | LPAREN RPAREN { ExprUnit }
+  | "(" ")" { ExprUnit }
 
   /* 1, "Hello" */
   | constant { ExprConstant $1 }
@@ -42,26 +51,26 @@ expr_:
   | UIDENT { ExprIdent $1 }
 
   /* (1, "a") */
-  | LPAREN xs=separated_nonempty_list(COMMA, expr) RPAREN { ExprTuple xs }
+  | "(" xs=separated_nonempty_list(",", expr) ")" { ExprTuple xs }
 
   /* {} */
-  | LBRACE RBRACE { ExprRecord ([], None) }
+  | "{" "}" { ExprRecord ([], None) }
 
   /* { a: "hello", b: 1 | r } */
-  | LBRACE
-    xs=separated_nonempty_list(COMMA, record_field)
+  | "{"
+    xs=separated_nonempty_list(",", record_field)
     ext=record_extends?
-    RPAREN
+    "}"
       { ExprRecord (xs, ext) }
 
   /* myRecord.fieldName */
-  | e=expr_ DOT id=LIDENT { ExprRecordAccess (located e $loc(e), id) }
+  | e=expr_ "." id=LIDENT { ExprRecordAccess (located e $loc(e), id) }
 
   /* (...) */
-  | LPAREN e=expr_ RPAREN { e }
+  | "(" e=expr_ ")" { e }
 
   /* fn x -> x + 1 */
-  | FN args=LIDENT+ ARROW fnbody=expr { ExprFn(args, fnbody) }
+  | FN args=LIDENT+ "->" fnbody=expr { ExprFn(args, fnbody) }
 
   /* match x with
       | 1 -> "yay"
@@ -73,42 +82,47 @@ expr_:
   /* let x y x = x + y + z in ... */
   | let_binding { $1 }
 
+  /* let T = Number in ... */
+  /* let T = { x: Option Boolean } in ... */
+  /* let Option x = | None | Some x in ... */
+  | type_binding { $1 }
+
 constant:
   | NUMBER { ConstNumber($1) }
   | STRING { ConstString($1) }
 
 record_field:
-  | id=LIDENT e=preceded(COLON, expr) { (id, e) }
+  | id=LIDENT e=preceded(":", expr) { (id, e) }
   | id=LIDENT { (id, located (ExprIdent id) $loc)}
 
 record_extends:
-  | PIPE id=LIDENT { id }
+  | "|" id=LIDENT { id }
 
 pattern:
   | pattern_ { located $1 $loc }
 
 pattern_:
-  | UNDERSCORE { PatternAny }
+  | "_" { PatternAny }
   | constant { PatternConstant $1 }
   | LIDENT { PatternVar $1 }
   | p=pattern AS id=LIDENT { PatternAlias (p, id) }
-  | LPAREN xs=separated_nonempty_list(COMMA, pattern) RPAREN
+  | "(" xs=separated_nonempty_list(",", pattern) ")"
       { PatternTuple xs }
-  | LBRACE xs=separated_nonempty_list(COMMA, record_pattern) RBRACE
+  | "{" xs=separated_nonempty_list(",", record_pattern) "}"
       { PatternRecord xs }
 
 record_pattern:
   | id=LIDENT { (id, located (PatternVar id) $loc) }
-  | id=LIDENT COLON p=pattern { (id, p) }
+  | id=LIDENT ":" p=pattern { (id, p) }
 
 match_case:
-  | PIPE p=pattern ARROW e=expr { (p, e) }
+  | "|" p=pattern "->" e=expr { (p, e) }
 
 let_binding:
-  | LET id=pattern EQUALS binding=expr IN body=expr
+  | LET id=pattern "=" binding=expr IN body=expr
       { ExprLet(id, binding, body) }
 
-  | LET id=LIDENT args=LIDENT+ EQUALS fnbody=expr IN body=expr
+  | LET id=LIDENT args=LIDENT+ "=" fnbody=expr IN body=expr
       {
         let name = located (PatternVar id) $loc(id) in
         let fn_loc = ($startpos(args), $endpos(fnbody)) in
@@ -116,81 +130,89 @@ let_binding:
         ExprLet(name, fn, body)
       }
 
-typedef:
-  | typedef_ { located $1 $loc }
+type_binding:
+  | TYPE id=UIDENT args=LIDENT* "=" binding=type_binding_body IN body=expr
+      { ExprTypeDec (id, args, binding, body) }
 
-typedef_:
-  | atomic_type_ { $1 }
-  | LPAREN xs=separated_nonempty_list(COMMA, atomic_type) RPAREN { TypeTuple xs }
-  | LBRACE xs=separated_nonempty_list(COMMA, record_field_typedef) ext=record_extend_typedef?
-      { TypeRecord (xs, ext) }
+type_binding_body:
+  | variant_def+ { TypeDecVariant $1 }
+  | type_signature { TypeDecAtomic $1 }
+
+variant_def:
+  | "|" id=UIDENT args=atomic_type* { (located id $loc(id), args) }
+
+type_signature_eof:
+  | type_signature EOF { $1 }
+
+type_signature:
+  | type_signature_ { located $1 $loc($1) }
+
+type_signature_:
+  | fn_type { $1 }
+
+fn_type:
+  | t=tuple_type_ { t }
+  | lhs=tuple_type "->" rhs=type_signature { TypeArrow (lhs, rhs) }
+
+tuple_type:
+  | t=tuple_type_ { located t $loc }
+
+tuple_type_:
+  | t=record_type_ { t }
+  | "(" ts=separated_nontrivial_llist(",", record_type) ")" { TypeTuple ts }
+
+record_type:
+  | t=record_type_ { located t $loc }
+
+record_type_:
+  | t=construct_type { t }
+  | "{"
+    fs=record_field_type_signature+
+    ext=record_extend_type_signature?
+    "}"
+      { TypeRecord (fs, ext) }
+
+construct_type:
+  | t=atomic_type_ { t }
+  | t=UIDENT ts=nonempty_list(atomic_type) { TypeConstructor (t, ts) }
 
 atomic_type:
-  | atomic_type_ { located $1 $loc }
+  | t=atomic_type_ { located t $loc }
 
 atomic_type_:
-  | LPAREN t=typedef_ RPAREN { t }
-  | UNDERSCORE { TypeAny }
+  | "(" t=fn_type ")" { t }
+  | "_" { TypeAny }
   | LIDENT { TypeVar $1 }
   | UIDENT { TypeIdent $1 }
-  | UIDENT nonempty_list(atomic_type) { }
 
-record_field_typedef:
-  | id=LIDENT COLON t=atomic_type { (id, t) }
+record_field_type_signature:
+  | id=LIDENT ":" t=atomic_type { (id, t) }
 
-record_extend_typedef:
-  | PIPE id=LIDENT { id }
+record_extend_type_signature:
+  | "|" id=LIDENT { id }
 
-(*
-expr_eof:
-  | expr EOF { $1 }
+(* STOLEN FROM OCAML SOURCE *)
+(* https://github.com/ocaml/ocaml/blob/trunk/parsing/parser.mly *)
 
-expr:
-  | simple_expr { $1 }
-  | block_expr { $1 }
-  | FN nonempty_list(pattern) ARROW expr { FunctionExpr($2, $4) }
-  | LET pattern EQUALS expr IN expr { LetExpr($2, $4, $6) }
-  | LET IDENT nonempty_list(pattern) EQUALS expr IN expr { LetExpr(VarPattern($2), FunctionExpr($3, $5), $7) }
-  | simple_expr nonempty_list(simple_expr) { ApplicationExpr($1, $2) }
-  | simple_expr LPAREN RPAREN { ApplicationExpr($1, []) }
-  | MATCH simple_expr WITH nonempty_list(match_entry) { MatchExpr($2, $4) }
+(* [reversed_separated_nontrivial_llist(separator, X)] recognizes a list of at
+   least two [X]s, separated with [separator]s, and produces an OCaml list in
+   reverse order -- that is, the last element in the input text appears first
+   in this list. Its definition is left-recursive. *)
+reversed_separated_nontrivial_llist(separator, X):
+  xs = reversed_separated_nontrivial_llist(separator, X)
+  separator
+  x = X
+    { x :: xs }
+| x1 = X
+  separator
+  x2 = X
+    { [ x2; x1 ] }
 
-simple_expr:
-  | literal { ValExpr($1) }
-  | IDENT { VarExpr $1 }
-  | LPAREN RPAREN { UnitExpr }
-  | LPAREN expr RPAREN { $2 }
-  | LBRACE RBRACE { RecordEmptyExpr }
-  | LBRACE record_fields RBRACE { fold_record_fields $2 RecordEmptyExpr }
-  | LBRACE record_fields COMMA ELLIPSIS simple_expr RBRACE { fold_record_fields $2 $5 }
-  | simple_expr DOT IDENT { RecordSelectExpr($1, $3) }
+(* [separated_nontrivial_llist(separator, X)] recognizes a list of at least
+   two [X]s, separated with [separator]s, and produces an OCaml list in direct
+   order -- that is, the first element in the input text appears first in this
+   list. *)
 
-block_expr:
-  | BEGIN separated_list(SEP, expr) END { BlockExpr($2) }
-
-literal:
-  | NUMBER { NumberLiteral($1) }
-  | STRING { StringLiteral($1) }
-
-record_fields:
-  | separated_nonempty_list(COMMA, record_field) { $1 }
-
-record_field:
-  | IDENT COLON expr { ($1, $3) }
-
-match_entry:
-  | PIPE pattern ARROW simple_expr { ($2, $4) }
-
-pattern:
-  | UNDERSCORE { WildcardPattern }
-  | literal { LiteralPattern($1) }
-  | IDENT { VarPattern($1) }
-  | LBRACE record_pattern RBRACE { RecordPattern($2) }
-
-record_pattern:
-  | ELLIPSIS IDENT { RestRPattern($2) }
-  | IDENT COMMA record_pattern { FieldRPattern($1, VarPattern($1), $3) }
-  | IDENT { FieldRPattern($1, VarPattern($1), NilRPattern) }
-  | IDENT COLON IDENT COMMA record_pattern { FieldRPattern($1, VarPattern($3), $5) }
-  | IDENT COLON IDENT { FieldRPattern($1, VarPattern($3), NilRPattern) }
-*)
+%inline separated_nontrivial_llist(separator, X):
+  xs = rev(reversed_separated_nontrivial_llist(separator, X))
+    { xs }

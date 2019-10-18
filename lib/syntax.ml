@@ -13,22 +13,27 @@ type constant =
   | ConstString of name
 
 (** A type signature *)
-and typedef = typedef_ located
-and typedef_ =
+and type_signature = type_signature_ located
+and type_signature_ =
   | TypeAny
   (* _ *)
   | TypeVar of name
   (* a *)
   | TypeIdent of name
   (* MyType *)
-  | TypeConstructor of name * typedef list
+  | TypeConstructor of name * type_signature list
   (* Constructor T1 T2 *)
-  | TypeArrow of typedef * typedef
+  | TypeArrow of type_signature * type_signature
   (* T1 -> T2 *)
-  | TypeTuple of typedef list
+  | TypeTuple of type_signature list
   (* (T1, T2) *)
-  | TypeRecord of (name * typedef) list * name option
+  | TypeRecord of (name * type_signature) list * name option
   (* { a: T1, b: T2 | r } *)
+
+(** A type that is defined before use *)
+and type_binding =
+  | TypeDecAtomic of type_signature
+  | TypeDecVariant of (name located * type_signature list) list
 
 (** A pattern to match a value against *)
 and pattern = pattern_ located
@@ -61,7 +66,7 @@ and expression_ =
   (* x *)
   | ExprLet of pattern * expression * expression
   (* let P1 = E1 in E2 *)
-  | ExprTypeDec of name * name list * typedef * expression
+  | ExprTypeDec of name * name list * type_binding * expression
   (* type L a = T in E *)
   | ExprFn of name list * expression
   (* fn P1 -> E1 *)
@@ -77,7 +82,7 @@ and expression_ =
   (* { a: E0, b: E1 } or { ...E, a: E0, b: E1 } *)
   | ExprRecordAccess of expression * name
   (* E0.l *)
-  | ExprConstraint of expression * typedef
+  | ExprConstraint of expression * type_signature
   (* E: T *)
   | ExprSequence of expression * expression
   (* E1; E2 *)
