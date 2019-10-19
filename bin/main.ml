@@ -1,20 +1,26 @@
 open Unnamed_programming_lang
 
-let testBuf = Sedlexing.Utf8.from_string "let x = { hello: 1 } in Hello 1;"
-let supplier = Lexer.makeSupplier testBuf
-
-let succeed _ =
-  Printf.printf "Well something worked..."
+let succeed t =
+  let ts = Syntax.type_signature_to_string t in
+  Stdio.printf "YAY: %s\n" ts
 
 let fail lexbuf _ =
   Printf.fprintf stderr
     "At offset %d: syntax error.\n%!"
     (Sedlexing.lexeme_start lexbuf)
 
-let loop lexbuf result =
+let parse lexbuf result =
   Parser.MenhirInterpreter.loop_handle
-    succeed (fail lexbuf) supplier result
+    succeed (fail lexbuf) (Lexer.makeSupplier lexbuf) result
 
-let () =
-  let (pos, _) = Sedlexing.lexing_positions testBuf in
-  loop testBuf (Parser.Incremental.expr_eof pos)
+let rec loop () =
+  Stdio.printf "Enter Type Sig: ";
+  match read_line () with
+  | "stop" | "quit" | "exit" -> ()
+  | s ->
+    let lexbuf = Sedlexing.Utf8.from_string s in
+    let (pos, _) = Sedlexing.lexing_positions lexbuf in
+    parse lexbuf (Parser.Incremental.type_signature_eof pos);
+    loop ()
+
+let () = loop ()

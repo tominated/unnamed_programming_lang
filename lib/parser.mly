@@ -139,7 +139,7 @@ type_binding_body:
   | type_signature { TypeDecAtomic $1 }
 
 variant_def:
-  | "|" id=UIDENT args=atomic_type* { (located id $loc(id), args) }
+  | "|" id=UIDENT args=type_signature* { (located id $loc(id), args) }
 
 type_signature_eof:
   | type_signature EOF { $1 }
@@ -148,45 +148,27 @@ type_signature:
   | type_signature_ { located $1 $loc($1) }
 
 type_signature_:
-  | fn_type { $1 }
+  | t=simple_type_ { t }
+  | lhs=simple_type "->" rhs=type_signature { TypeArrow (lhs, rhs) }
 
-fn_type:
-  | t=tuple_type_ { t }
-  | lhs=tuple_type "->" rhs=type_signature { TypeArrow (lhs, rhs) }
+simple_type:
+  | t=simple_type_ { located t $loc }
 
-tuple_type:
-  | t=tuple_type_ { located t $loc }
-
-tuple_type_:
-  | t=record_type_ { t }
-  | "(" ts=separated_nontrivial_llist(",", record_type) ")" { TypeTuple ts }
-
-record_type:
-  | t=record_type_ { located t $loc }
-
-record_type_:
-  | t=construct_type { t }
+simple_type_:
+  | "(" ts=separated_nontrivial_llist(",", simple_type) ")" { TypeTuple ts }
   | "{"
     fs=record_field_type_signature+
     ext=record_extend_type_signature?
     "}"
       { TypeRecord (fs, ext) }
-
-construct_type:
-  | t=atomic_type_ { t }
-  | t=UIDENT ts=nonempty_list(atomic_type) { TypeConstructor (t, ts) }
-
-atomic_type:
-  | t=atomic_type_ { located t $loc }
-
-atomic_type_:
-  | "(" t=fn_type ")" { t }
+  | t=UIDENT ts=nonempty_list(type_signature) { TypeConstructor (t, ts) }
+  | "(" t=type_signature_ ")" { t }
   | "_" { TypeAny }
   | LIDENT { TypeVar $1 }
   | UIDENT { TypeIdent $1 }
 
 record_field_type_signature:
-  | id=LIDENT ":" t=atomic_type { (id, t) }
+  | id=LIDENT ":" t=type_signature { (id, t) }
 
 record_extend_type_signature:
   | "|" id=LIDENT { id }

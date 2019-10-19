@@ -1,5 +1,5 @@
 (menhir
-  (flags --table --dump --strict --explain)
+  (flags --table --explain)
   (modules parser))
 
 (library
@@ -7,4 +7,4 @@
  (name unnamed_programming_lang)
  (libraries base stdio sedlex menhirLib)
  (preprocess
-  (pps ppx_inline_test sedlex.ppx)))
+  (pps ppx_sexp_conv ppx_inline_test sedlex.ppx)))
