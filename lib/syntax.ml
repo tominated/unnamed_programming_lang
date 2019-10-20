@@ -105,3 +105,72 @@ let rec type_signature_to_string ts =
     let fields = String.concat ~sep:", " fs_ in
     let ext_ = Option.value_map ~default:"" ~f:(Printf.sprintf " | %s") ext in
     Printf.sprintf "{ %s%s }" fields ext_
+
+let constant_to_string c =
+  match c with
+  | ConstNumber n -> Printf.sprintf "%f" n
+  | ConstString s -> s
+
+let rec pattern_to_string p =
+  match p.item with
+  | PatternAny -> "_"
+  | PatternVar v -> v
+  | PatternConstant c -> constant_to_string c
+  | PatternTuple xs ->
+      let patterns = String.concat ~sep:", " (List.map ~f:pattern_to_string xs) in
+      Printf.sprintf "(%s)" patterns
+  | PatternConstructor (n, xs) ->
+      let patterns = String.concat ~sep:" " (List.map ~f:pattern_to_string xs) in
+      Printf.sprintf "%s %s" n patterns
+  | PatternRecord xs ->
+      let field_to_string (n, p) = Printf.sprintf "%s: %s" n (pattern_to_string p) in
+      let fields = String.concat ~sep:", " (List.map ~f:field_to_string xs) in
+      Printf.sprintf "{ %s }" fields
+  | PatternAlias (p, a) -> Printf.sprintf "%s as %s" (pattern_to_string p) a
+  | PatternOr (a, b) -> Printf.sprintf "%s | %s" (pattern_to_string a) (pattern_to_string b)
+
+let type_binding_to_string tb =
+  match tb with
+  | TypeDecAtomic ts -> type_signature_to_string ts
+  | TypeDecVariant xs ->
+      let variant_to_string (n, ts) = Printf.sprintf "%s %s" (n.item) (String.concat ~sep:" " (List.map ~f:type_signature_to_string ts)) in
+      String.concat ~sep:" | " (List.map ~f:variant_to_string xs)
+
+let rec expression_to_string e =
+  match e.item with
+  | ExprUnit -> "()"
+  | ExprConstant c -> constant_to_string c
+  | ExprIdent id -> id
+  | ExprLet (p, b, e) ->
+      Printf.sprintf "let %s = %s in\n%s"
+        (pattern_to_string p)
+        (expression_to_string b)
+        (expression_to_string e)
+  | ExprTypeDec (n, a, b, e) ->
+      let args = String.concat (List.map ~f:(fun n -> Printf.sprintf " %s" n) a) in
+      Printf.sprintf "type %s%s = %s in\n%s"
+        n args (type_binding_to_string b) (expression_to_string e)
+  | ExprFn (args, e) ->
+      Printf.sprintf "fn %s -> %s" (String.concat ~sep:" " args) (expression_to_string e)
+  | ExprApply (e, args) ->
+      Printf.sprintf "%s %s"
+        (expression_to_string e)
+        (String.concat ~sep:" " (List.map ~f:expression_to_string args))
+  | ExprMatch (e, cs) ->
+      let case_to_string (p, e) = Printf.sprintf "%s -> %s" (pattern_to_string p) (expression_to_string e) in
+      let cases = String.concat ~sep:" | " (List.map ~f:case_to_string cs) in
+      Printf.sprintf "match %s with\n%s" (expression_to_string e) cases
+  | ExprTuple es ->
+      let exprs = String.concat ~sep:", " (List.map ~f:expression_to_string es) in
+      Printf.sprintf "(%s)" exprs
+  | ExprConstruct (n, es) ->
+      let exprs = String.concat ~sep:" " (List.map ~f:expression_to_string es) in
+      Printf.sprintf "%s %s" n exprs
+  | ExprRecord (fs, ext) ->
+      let fs_ = List.map ~f:(fun (name, e) -> Printf.sprintf "%s : %s" name (expression_to_string e)) fs in
+      let fields = String.concat ~sep:", " fs_ in
+      let ext_ = Option.value_map ~default:"" ~f:(Printf.sprintf " | %s") ext in
+      Printf.sprintf "{ %s%s }" fields ext_
+  | ExprRecordAccess (e1, n) -> Printf.sprintf "%s.%s" (expression_to_string e1) n
+  | ExprConstraint (e, t) -> Printf.sprintf "%s : %s" (expression_to_string e) (type_signature_to_string t)
+  | ExprSequence (e1, e2) -> Printf.sprintf "%s;\n%s" (expression_to_string e1) (expression_to_string e2)
