@@ -6,11 +6,14 @@
 
 %token <string> LIDENT (* lowecase identifier *)
 %token <string> UIDENT (* Uppercase identifier *)
+%token <string> OPERATOR (* Operator identifier *)
 %token <float> NUMBER
 %token <string> STRING
-%token FN LET TYPE IN MATCH WITH AS
+%token FN LET TYPE IN IF THEN ELSE MATCH WITH AS
 %token LBRACE "{"
 %token RBRACE "}"
+%token LBRACKET "["
+%token RBRACKET "]"
 %token LPAREN "("
 %token RPAREN ")"
 %token ARROW "->"
@@ -20,155 +23,132 @@
 %token COLON ":"
 %token COMMA ","
 %token UNDERSCORE "_"
-%token SEMI
 %token EOF
 
-%start expr_eof
-%type <Syntax.expression> expr_eof
+%start parse_expression
+%type <Syntax.expression> parse_expression
 
-%start type_signature_eof
-%type <Syntax.type_signature> type_signature_eof
+%start parse_type_signature
+%type <Syntax.type_signature> parse_type_signature
 
 %%
 
-expr_eof:
-  | expr EOF { $1 }
+(** Location helper *)
+%inline l(X):
+  | x=X { located x $loc }
 
-expr:
-  | expr_ SEMI { located $1 $loc }
+parse_expression:
+  | e=l(expr) EOF { e }
 
-expr_:
-  /* () */
-  | "(" ")" { ExprUnit }
+(** Identifiers *)
 
-  /* 1, "Hello" */
-  | constant { ExprConstant $1 }
+val_ident: id=LIDENT | "(" id= OPERATOR ")" { id }
 
-  /* myId */
-  | LIDENT { ExprIdent $1 }
+(** Patterns *)
 
-  /* MyId */
-  | UIDENT { ExprIdent $1 }
+(* A single field in a record *)
+field_pattern:
+  | id=val_ident "=" body=l(pattern) { (id, body) }
+  | id=val_ident { (id, located (PatternVar id) $loc(id)) }
 
-  /* (1, "a") */
-  | "(" xs=separated_nonempty_list(",", expr) ")" { ExprTuple xs }
+(* Any pattern that has unambigious grammar *)
+atomic_pattern:
+  | p=l(atomic_pattern) AS id=val_ident { PatternAlias (p, id) }
+  | id=val_ident { PatternVar id }
+  | id=UIDENT { PatternConstructor (id, []) }
+  | c=constant { PatternConstant c }
+  | "(" ps=l(pattern)+ ")" { PatternTuple ps }
+  | "{" fields=field_pattern+ "}" { PatternRecord fields }
 
-  /* {} */
-  | "{" "}" { ExprRecord ([], None) }
-
-  /* { a: "hello", b: 1 | r } */
-  | "{"
-    xs=separated_nonempty_list(",", record_field)
-    ext=record_extends?
-    "}"
-      { ExprRecord (xs, ext) }
-
-  /* myRecord.fieldName */
-  | e=expr_ "." id=LIDENT { ExprRecordAccess (located e $loc(e), id) }
-
-  /* (...) */
-  | "(" e=expr_ ")" { e }
-
-  /* fn x -> x + 1 */
-  | FN args=LIDENT+ "->" fnbody=expr { ExprFn(args, fnbody) }
-
-  /* match x with
-      | 1 -> "yay"
-      | _ -> "nay"
-  */
-  | MATCH e=expr WITH cases=match_case+ { ExprMatch(e, cases) }
-
-  /* let x = 1 in ... */
-  /* let x y x = x + y + z in ... */
-  | let_binding { $1 }
-
-  /* let T = Number in ... */
-  /* let T = { x: Option Boolean } in ... */
-  /* let Option x = | None | Some x in ... */
-  | type_binding { $1 }
-
-constant:
-  | NUMBER { ConstNumber($1) }
-  | STRING { ConstString($1) }
-
-record_field:
-  | id=LIDENT e=preceded(":", expr) { (id, e) }
-  | id=LIDENT { (id, located (ExprIdent id) $loc)}
-
-record_extends:
-  | "|" id=LIDENT { id }
-
+(* Any pattern to match a value against *)
 pattern:
-  | pattern_ { located $1 $loc }
+  | p=atomic_pattern { p }
+  | id=UIDENT args=l(atomic_pattern)+ { PatternConstructor (id, args) }
 
-pattern_:
-  | "_" { PatternAny }
-  | constant { PatternConstant $1 }
-  | LIDENT { PatternVar $1 }
-  | p=pattern AS id=LIDENT { PatternAlias (p, id) }
-  | "(" xs=separated_nonempty_list(",", pattern) ")"
-      { PatternTuple xs }
-  | "{" xs=separated_nonempty_list(",", record_pattern) "}"
-      { PatternRecord xs }
+(** Expressions *)
 
-record_pattern:
-  | id=LIDENT { (id, located (PatternVar id) $loc) }
-  | id=LIDENT ":" p=pattern { (id, p) }
+(* A literal *)
+constant:
+  | n=NUMBER { ConstNumber n }
+  | s=STRING { ConstString s }
 
+(* A case in a match expression *)
 match_case:
-  | "|" p=pattern "->" e=expr { (p, e) }
+  | "|" pat=l(pattern) "->" e=l(expr) { (pat, e) }
 
-let_binding:
-  | LET id=pattern "=" binding=expr IN body=expr
-      { ExprLet(id, binding, body) }
+(* A field in a record *)
+field_expr:
+  | id=val_ident "=" e=l(expr) { (id, e) }
 
-  | LET id=LIDENT args=LIDENT+ "=" fnbody=expr IN body=expr
-      {
-        let name = located (PatternVar id) $loc(id) in
-        let fn_loc = ($startpos(args), $endpos(fnbody)) in
-        let fn = located (ExprFn (args, fnbody)) fn_loc in
-        ExprLet(name, fn, body)
-      }
+(* The base that a record is extending *)
+record_expr_base:
+  | "|" e=l(expr) { e }
 
-type_binding:
-  | TYPE id=UIDENT args=LIDENT* "=" binding=type_binding_body IN body=expr
-      { ExprTypeDec (id, args, binding, body) }
-
-type_binding_body:
-  | variant_def+ { TypeDecVariant $1 }
-  | type_signature { TypeDecAtomic $1 }
-
+(* A single variant definition *)
 variant_def:
-  | "|" id=UIDENT args=type_signature* { (located id $loc(id), args) }
+  | "|" id=UIDENT args=l(type_signature)* { (id, args) }
 
-type_signature_eof:
-  | type_signature EOF { $1 }
+(* A type signature or variant to be bound *)
+type_binding:
+  | vs=variant_def+ { TypeBindVariant vs }
+  | t=l(type_signature) { TypeBindAtomic t }
+
+(* An unambiguous expression *)
+atomic_expr:
+  | id=val_ident { ExprIdent id }
+  | c=constant { ExprConstant c }
+  | e=l(atomic_expr) "." id=val_ident { ExprRecordAccess (e, id) }
+  | "(" elems=separated_nontrivial_llist(",", l(expr)) "}" { ExprTuple elems }
+  | "[" elems=separated_list(",", l(expr)) "]" { ExprArray elems }
+  | "{" fields=separated_list(",", field_expr) base=record_expr_base? "}" {ExprRecord (fields, base) }
+
+(* Function application and atomic expressions *)
+application_expr:
+  | e=atomic_expr { e }
+  | id=UIDENT args=l(atomic_expr)* { ExprConstruct (id, args) }
+  | e=l(atomic_expr) args=l(atomic_expr)+ { ExprApply (e, args) }
+
+(* Infix/function application, lambdas, atomic expressions *)
+infix_expr:
+  | e=application_expr { e }
+  | FN args=val_ident+ "->" body=l(expr) { ExprFn (args, body) }
+  | lhs=l(application_expr) op=OPERATOR rhs=l(infix_expr) { ExprInfix (lhs, op, rhs) }
+
+(* All expressions *)
+expr:
+  | e=infix_expr { e }
+  | IF pred=l(expr) THEN t=l(expr) ELSE f=l(expr) { ExprIfElse (pred, t, f) }
+  | MATCH e=l(expr) WITH cases=match_case+ { ExprMatch (e, cases) }
+  | LET pat=l(atomic_pattern) "=" v=l(expr) IN e=l(expr) { ExprValBinding (pat, v, e) }
+  | LET id=val_ident args=val_ident+ "=" body=l(expr) IN e=l(expr)
+    {
+      let pattern = located (PatternVar id) $loc(id) in
+      let f = located (ExprFn (args, body)) ($startpos(id), $endpos(body)) in
+      ExprValBinding (pattern, f, e)
+    }
+  | TYPE id=UIDENT params=LIDENT* "=" t=type_binding IN e=l(expr) { ExprTypeBinding (id, params, t, e) }
+
+(** Type Signatures *)
+
+parse_type_signature:
+  | t=l(type_signature) EOF { t }
 
 type_signature:
-  | type_signature_ { located $1 $loc($1) }
+  | t=atomic_type { t }
+  | lhs=l(atomic_type) "->" rhs=l(type_signature) { TypeArrow (lhs, rhs) }
 
-type_signature_:
-  | t=simple_type_ { t }
-  | lhs=simple_type "->" rhs=type_signature { TypeArrow (lhs, rhs) }
-
-simple_type:
-  | t=simple_type_ { located t $loc }
-
-simple_type_:
-  | "(" ts=separated_nontrivial_llist(",", simple_type) ")" { TypeTuple ts }
-  | "{"
-    fs=record_field_type_signature+
-    ext=record_extend_type_signature?
-    "}"
+atomic_type:
+  | "(" ts=separated_nontrivial_llist(",", l(atomic_type)) ")" { TypeTuple ts }
+  | "{" fs=record_field_type_signature+ ext=record_extend_type_signature? "}"
       { TypeRecord (fs, ext) }
-  | t=UIDENT ts=nonempty_list(type_signature) { TypeConstructor (t, ts) }
-  | "(" t=type_signature_ ")" { t }
+  | t=UIDENT ts=nonempty_list(l(type_signature)) { TypeConstructor (t, ts) }
+  | "(" t=type_signature ")" { t }
   | "_" { TypeAny }
   | LIDENT { TypeVar $1 }
   | UIDENT { TypeIdent $1 }
 
 record_field_type_signature:
-  | id=LIDENT ":" t=type_signature { (id, t) }
+  | id=LIDENT ":" t=l(type_signature) { (id, t) }
 
 record_extend_type_signature:
   | "|" id=LIDENT { id }

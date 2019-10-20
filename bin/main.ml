@@ -1,7 +1,7 @@
 open Unnamed_programming_lang
 
-let succeed t =
-  let ts = Syntax.type_signature_to_string t in
+let succeed e =
+  let ts = Syntax.expression_to_string e in
   Stdio.printf "YAY: %s\n" ts
 
 let fail lexbuf _ =
@@ -14,13 +14,13 @@ let parse lexbuf result =
     succeed (fail lexbuf) (Lexer.makeSupplier lexbuf) result
 
 let rec loop () =
-  Stdio.printf "Enter Type Sig: ";
+  Stdio.printf "Enter Exp: ";
   match read_line () with
   | "stop" | "quit" | "exit" -> ()
   | s ->
     let lexbuf = Sedlexing.Utf8.from_string s in
     let (pos, _) = Sedlexing.lexing_positions lexbuf in
-    parse lexbuf (Parser.Incremental.type_signature_eof pos);
+    parse lexbuf (Parser.Incremental.parse_expression pos);
     loop ()
 
 let () = loop ()

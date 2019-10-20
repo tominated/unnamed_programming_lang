@@ -10,7 +10,7 @@ let ident_char = [%sedlex.regexp? ('a'..'z'|'A'..'Z'|'0'..'9'|'_')]
 let number = [%sedlex.regexp? Plus ('0'..'9'), Opt ('.', Plus '0'..'9')]
 let lident = [%sedlex.regexp? 'a'..'z', Star ident_char]
 let uident = [%sedlex.regexp? 'A'..'Z', Star ident_char]
-let operator = [%sedlex.regexp? Chars "!@#$%^&*-_=+<>?/\\~"]
+let operator = [%sedlex.regexp? Plus (Chars "!@#$%^&*-_=+<>?/\\~")]
 
 let rec read_string buf lexbuf =
   match%sedlex lexbuf with
@@ -37,6 +37,8 @@ let rec token lexbuf =
   | newline -> L.new_line lexbuf; token lexbuf
   | '{' -> LBRACE
   | '}' -> RBRACE
+  | '[' -> LBRACKET
+  | ']' -> RBRACKET
   | '(' -> LPAREN
   | ')' -> RPAREN
   | '.' -> DOT
@@ -45,7 +47,6 @@ let rec token lexbuf =
   | '|' -> PIPE
   | '_' -> UNDERSCORE
   | '=' -> EQUALS
-  | ';' -> SEMI
   | "->" -> ARROW
   | "fn" -> FN
   | "let" -> LET
@@ -57,6 +58,7 @@ let rec token lexbuf =
   | number -> NUMBER (Float.of_string (L.Utf8.lexeme lexbuf))
   | lident -> LIDENT (L.Utf8.lexeme lexbuf)
   | uident -> UIDENT (L.Utf8.lexeme lexbuf)
+  | operator -> OPERATOR (L.Utf8.lexeme lexbuf)
   | '"' -> read_string (Buffer.create 32) lexbuf
   | _ ->
     let (s, e) = L.lexing_positions lexbuf in
