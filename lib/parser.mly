@@ -78,7 +78,7 @@ match_case:
 
 (* A field in a record *)
 field_expr:
-  | id=val_ident "=" e=l(expr) { (id, e) }
+  | id=val_ident ":" e=l(expr) { (id, e) }
 
 (* The base that a record is extending *)
 record_expr_base:
