@@ -145,6 +145,33 @@ let rec pattern_to_string p =
   | PatternAlias (p, a) -> Printf.sprintf "%s as %s" (pattern_to_string p) a
   | PatternOr (a, b) -> Printf.sprintf "%s | %s" (pattern_to_string a) (pattern_to_string b)
 
+(* Test function to create dummy locations for testing *)
+let locate = fun p -> { item = p; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
+
+let%test_module "pattern_to_string" = (module struct
+  let%expect_test "should print a constant" =
+    let cStr = ConstString "foo" in
+    let pattern = locate (PatternConstant cStr) in
+    pattern_to_string pattern |> Stdio.print_endline;
+    [%expect {| foo |}]
+
+  let%expect_test "should print a tuple" =
+    let foo = PatternConstant (ConstString "foo") in
+    let bar = PatternConstant (ConstString "bar") in
+    let pattern = locate (PatternTuple [locate foo; locate foo; locate bar]) in
+    pattern_to_string pattern |> Stdio.print_endline;
+    [%expect {| (foo, foo, bar) |}]
+
+  let%expect_test "should print a constructor" =
+    let foo = PatternConstant (ConstString "foo") in
+    let bar = PatternConstant (ConstString "bar") in
+    let ctor = PatternConstructor ("Test", [locate foo; locate bar]) in
+    let pattern = locate ctor in
+    pattern_to_string pattern |> Stdio.print_endline;
+    [%expect {| Test foo bar |}]
+end)
+
+
 let type_binding_to_string tb =
   match tb with
   | TypeBindAtomic ts -> type_signature_to_string ts
