@@ -117,6 +117,11 @@ let constant_to_string c =
   | ConstNumber n -> Printf.sprintf "%f" n
   | ConstString s -> s
 
+let%test_module "constant_to_string" = (module struct
+  let%test "should print a string" = constant_to_string (ConstString "foo") |> String.equal "foo"
+  let%test "should print a number" = constant_to_string (ConstNumber 123.) |> String.equal "123.000000"
+end)
+
 let rec pattern_to_string p =
   match p.item with
   | PatternAny -> "_"
