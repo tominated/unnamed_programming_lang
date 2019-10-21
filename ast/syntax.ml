@@ -118,8 +118,13 @@ let constant_to_string c =
   | ConstString s -> s
 
 let%test_module "constant_to_string" = (module struct
-  let%test "should print a string" = constant_to_string (ConstString "foo") |> String.equal "foo"
-  let%test "should print a number" = constant_to_string (ConstNumber 123.) |> String.equal "123.000000"
+  let%expect_test "should print a string" =
+    constant_to_string (ConstString "foo") |> Stdio.print_endline;
+    [%expect {| foo |}]
+
+  let%expect_test "should print a number" =
+    constant_to_string (ConstNumber 123.) |> Stdio.print_endline;
+    [%expect {| 123.000000 |}]
 end)
 
 let rec pattern_to_string p =
