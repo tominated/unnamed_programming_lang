@@ -4,8 +4,7 @@
   "description": "",
   "license": "MIT",
   "esy": {
-    "build": "refmterr dune build",
-    "buildEnv": { "DUNE_BUILD_DIR": "#{self.target_dir}" }
+    "build": "refmterr dune build -p #{self.name}"
   },
   "dependencies": {
     "@opam/dune": "*",

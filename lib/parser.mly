@@ -98,7 +98,7 @@ atomic_expr:
   | id=val_ident { ExprIdent id }
   | c=constant { ExprConstant c }
   | e=l(atomic_expr) "." id=val_ident { ExprRecordAccess (e, id) }
-  | "(" elems=separated_nontrivial_llist(",", l(expr)) "}" { ExprTuple elems }
+  | "(" elems=separated_nontrivial_llist(",", l(expr)) ")" { ExprTuple elems }
   | "[" elems=separated_list(",", l(expr)) "]" { ExprArray elems }
   | "{" fields=separated_list(",", field_expr) base=record_expr_base? "}" {ExprRecord (fields, base) }
 
