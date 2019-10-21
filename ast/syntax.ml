@@ -158,13 +158,13 @@ let rec expression_to_string e =
   | ExprConstant c -> constant_to_string c
   | ExprIdent id -> id
   | ExprValBinding (p, b, e) ->
-      Printf.sprintf "let %s = %s in\n%s"
+      Printf.sprintf "let %s = %s in %s"
         (pattern_to_string p)
         (expression_to_string b)
         (expression_to_string e)
   | ExprTypeBinding (n, a, b, e) ->
       let args = String.concat (List.map ~f:(fun n -> Printf.sprintf " %s" n) a) in
-      Printf.sprintf "type %s%s = %s in\n%s"
+      Printf.sprintf "type %s%s = %s in %s"
         n args (type_binding_to_string b) (expression_to_string e)
   | ExprFn (args, e) ->
       Printf.sprintf "fn %s -> %s" (String.concat ~sep:" " args) (expression_to_string e)
@@ -177,7 +177,7 @@ let rec expression_to_string e =
   | ExprMatch (e, cs) ->
       let case_to_string (p, e) = Printf.sprintf "%s -> %s" (pattern_to_string p) (expression_to_string e) in
       let cases = String.concat ~sep:" | " (List.map ~f:case_to_string cs) in
-      Printf.sprintf "match %s with\n%s" (expression_to_string e) cases
+      Printf.sprintf "match %s with %s" (expression_to_string e) cases
   | ExprIfElse (p, t, f) ->
       Printf.sprintf "if %s then %s else %s" (expression_to_string p) (expression_to_string t) (expression_to_string f)
   | ExprTuple es ->
@@ -195,4 +195,4 @@ let rec expression_to_string e =
       Printf.sprintf "{ %s%s }" fields base
   | ExprRecordAccess (e1, n) -> Printf.sprintf "%s.%s" (expression_to_string e1) n
   | ExprConstraint (e, t) -> Printf.sprintf "%s : %s" (expression_to_string e) (type_signature_to_string t)
-  | ExprSequence (e1, e2) -> Printf.sprintf "%s;\n%s" (expression_to_string e1) (expression_to_string e2)
+  | ExprSequence (e1, e2) -> Printf.sprintf "%s; %s" (expression_to_string e1) (expression_to_string e2)
