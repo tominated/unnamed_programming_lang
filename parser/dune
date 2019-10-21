@@ -7,4 +7,4 @@
  (name parser)
  (libraries base stdio sedlex menhirLib ast)
  (preprocess
-  (pps ppx_sexp_conv ppx_inline_test sedlex.ppx)))
+  (pps ppx_sexp_conv ppx_inline_test ppx_expect sedlex.ppx)))
