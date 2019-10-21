@@ -1,5 +1,5 @@
 %{
-  open Syntax
+  open Ast.Syntax
 
   let located item location = { item = item; location = location }
 %}
@@ -26,10 +26,10 @@
 %token EOF
 
 %start parse_expression
-%type <Syntax.expression> parse_expression
+%type <Ast.Syntax.expression> parse_expression
 
 %start parse_type_signature
-%type <Syntax.type_signature> parse_type_signature
+%type <Ast.Syntax.type_signature> parse_type_signature
 
 %%
 

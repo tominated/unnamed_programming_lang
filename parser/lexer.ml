@@ -1,8 +1,8 @@
 open Base
-open Parser
+open Expression_parser
 
 module L = Sedlexing
-module I = Parser.MenhirInterpreter
+module I = MenhirInterpreter
 
 let newline = [%sedlex.regexp? '\r' | '\n' | "\r\n"]
 
