@@ -3,17 +3,4 @@ name: "unnamed_programming_lang"
 synopsis: "A functional programming language that will compile to JS"
 authors: "Tom Brunoli"
 maintainer: "tominated"
-version: "0.1"
-build: [
-  [ "dune" "subst" ] {pinned}
-  [ "dune" "build" "-p" name "-j" jobs ]
-]
-depends: [
-  "dune" {build}
-  "base"
-  "stdio"
-  "sedlex"
-  "menhir"
-  "ppx_inline_test"
-  "ppx_sexp_conv"
-]
+version: "0.0"

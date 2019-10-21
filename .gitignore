@@ -28,4 +28,12 @@ setup.log
 # Local OPAM switch
 _opam/
 
+# esy
 node_modules/
+refmt.js
+refmt.map
+_esybuild
+_esyinstall
+_release
+_esy
+junit.xml
