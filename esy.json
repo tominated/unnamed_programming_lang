@@ -6,6 +6,9 @@
   "esy": {
     "build": "refmterr dune build -p #{self.name}"
   },
+  "scripts": {
+    "watch": "dune build -p #{self.name} --watch"
+  },
   "dependencies": {
     "@opam/base": "*",
     "@opam/dune": "*",
