@@ -1,5 +1,5 @@
 {
-  "checksum": "3f3b1d67f97436eb502c9ef991789a6f",
+  "checksum": "e573d63da8a7320998f6eb0fb619b2b0",
   "root": "unnamed_programming_lang@link-dev:./esy.json",
   "node": {
     "unnamed_programming_lang@link-dev:./esy.json": {
@@ -13,6 +13,7 @@
         "@opam/stdio@opam:v0.12.0@04b3b004",
         "@opam/sedlex@opam:2.1@400920d8",
         "@opam/ppx_sexp_conv@opam:v0.12.0@6e30d275",
+        "@opam/ppx_let@opam:v0.12.0@b52d29f3",
         "@opam/ppx_inline_test@opam:v0.12.0@f31e9c76",
         "@opam/ppx_expect@opam:v0.12.0@5f9b1cff",
         "@opam/merlin@opam:3.3.2@7a364181",
@@ -439,6 +440,34 @@
       "devDependencies": [
         "ocaml@4.8.1000@d41d8cd9", "@opam/sexplib0@opam:v0.12.0@e432406d",
         "@opam/ppxlib@opam:0.8.1@67aec471",
+        "@opam/dune@opam:1.11.4@21d66ccd", "@opam/base@opam:v0.12.2@d687150c"
+      ]
+    },
+    "@opam/ppx_let@opam:v0.12.0@b52d29f3": {
+      "id": "@opam/ppx_let@opam:v0.12.0@b52d29f3",
+      "name": "@opam/ppx_let",
+      "version": "opam:v0.12.0",
+      "source": {
+        "type": "install",
+        "source": [
+          "archive:https://opam.ocaml.org/cache/md5/8e/8ebaa03cb252e29c3152cf32e5769e83#md5:8ebaa03cb252e29c3152cf32e5769e83",
+          "archive:https://ocaml.janestreet.com/ocaml-core/v0.12/files/ppx_let-v0.12.0.tar.gz#md5:8ebaa03cb252e29c3152cf32e5769e83"
+        ],
+        "opam": {
+          "name": "ppx_let",
+          "version": "v0.12.0",
+          "path": "esy.lock/opam/ppx_let.v0.12.0"
+        }
+      },
+      "overrides": [],
+      "dependencies": [
+        "ocaml@4.8.1000@d41d8cd9", "@opam/ppxlib@opam:0.8.1@67aec471",
+        "@opam/dune@opam:1.11.4@21d66ccd",
+        "@opam/base@opam:v0.12.2@d687150c",
+        "@esy-ocaml/substs@0.0.1@d41d8cd9"
+      ],
+      "devDependencies": [
+        "ocaml@4.8.1000@d41d8cd9", "@opam/ppxlib@opam:0.8.1@67aec471",
         "@opam/dune@opam:1.11.4@21d66ccd", "@opam/base@opam:v0.12.2@d687150c"
       ]
     },

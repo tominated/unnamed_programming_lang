@@ -2,6 +2,20 @@
   open Ast.Syntax
 
   let located item location = { item = item; location = location }
+
+  let fn_expr (args: string list) (body: expression) =
+    Base.List.fold_right
+      ~init:body
+      ~f:(fun arg acc -> located (ExprFn (arg, acc)) body.location)
+      args
+    |> fun x -> x.item
+
+  let apply_expr (fn: expression) (args: expression list) =
+    Base.List.fold
+      ~init:fn
+      ~f:(fun acc arg -> located (ExprApply(acc, arg)) fn.location)
+      args
+    |> fun x -> x.item
 %}
 
 %token <string> LIDENT (* lowecase identifier *)
@@ -106,12 +120,12 @@ atomic_expr:
 application_expr:
   | e=atomic_expr { e }
   | id=UIDENT args=l(atomic_expr)* { ExprConstruct (id, args) }
-  | e=l(atomic_expr) args=l(atomic_expr)+ { ExprApply (e, args) }
+  | e=l(atomic_expr) args=l(atomic_expr)+ { apply_expr e args }
 
 (* Infix/function application, lambdas, atomic expressions *)
 infix_expr:
   | e=application_expr { e }
-  | FN args=val_ident+ "->" body=l(expr) { ExprFn (args, body) }
+  | FN args=val_ident+ "->" body=l(expr) { fn_expr args body }
   | lhs=l(application_expr) op=OPERATOR rhs=l(infix_expr) { ExprInfix (lhs, op, rhs) }
 
 (* All expressions *)
@@ -123,7 +137,7 @@ expr:
   | LET id=val_ident args=val_ident+ "=" body=l(expr) IN e=l(expr)
     {
       let pattern = located (PatternVar id) $loc(id) in
-      let f = located (ExprFn (args, body)) ($startpos(id), $endpos(body)) in
+      let f = located (fn_expr args body) ($startpos(id), $endpos(body)) in
       ExprValBinding (pattern, f, e)
     }
   | TYPE id=UIDENT params=LIDENT* "=" t=type_binding IN e=l(expr) { ExprTypeBinding (id, params, t, e) }
@@ -143,7 +157,6 @@ atomic_type:
       { TypeRecord (fs, ext) }
   | t=UIDENT ts=nonempty_list(l(type_signature)) { TypeConstructor (t, ts) }
   | "(" t=type_signature ")" { t }
-  | "_" { TypeAny }
   | LIDENT { TypeVar $1 }
   | UIDENT { TypeIdent $1 }
 

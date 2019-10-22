@@ -1,6 +1,6 @@
 (executable
  (public_name unnamed_programming_lang)
  (name main)
- (libraries parser base stdio)
+ (libraries parser typechecker base stdio)
  (preprocess
   (pps ppx_inline_test)))
