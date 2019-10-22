@@ -10,15 +10,16 @@
     "clean": "dune clean"
   },
   "dependencies": {
+    "ocaml": "4.08.1000",
     "@opam/base": "*",
     "@opam/dune": "*",
+    "@opam/merlin": "*",
     "@opam/menhir": "*",
     "@opam/ppx_expect": "v0.12.0",
     "@opam/ppx_inline_test": "*",
     "@opam/ppx_sexp_conv": "*",
     "@opam/sedlex": "*",
     "@opam/stdio": "*",
-    "ocaml": "4.07.1",
     "refmterr": "*"
   }
 }
