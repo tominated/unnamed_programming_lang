@@ -6,12 +6,12 @@ let constant_to_js (constant: Syntax.constant): string =
   | Ast.Syntax.ConstNumber n -> Float.to_string n
   | Ast.Syntax.ConstString s -> s
 
-let pattern_to_js ({ item }: Syntax.pattern): string =
+let pattern_to_js ({ item ; _ }: Syntax.pattern): string =
   match item with
   | Ast.Syntax.PatternVar v -> v
   | _ -> failwith "Unsupported"
 
-let rec expression_to_js ({ item }: Syntax.expression): string =
+let rec expression_to_js ({ item ; _ }: Syntax.expression): string =
   match item with
   | Ast.Syntax.ExprUnit -> ""
   | Ast.Syntax.ExprConstant c -> constant_to_js c
@@ -32,4 +32,6 @@ let rec expression_to_js ({ item }: Syntax.expression): string =
         (expression_to_js lhs)
         op
         (expression_to_js rhs)
+  | Ast.Syntax.ExprTuple (xs) ->
+        Printf.sprintf "[%s]" (String.concat ~sep:", " (xs |> List.map ~f:(fun expr -> expression_to_js expr)))
   | _ -> failwith "Unsupported"
