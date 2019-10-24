@@ -178,6 +178,25 @@ let instantiate (scheme: Scheme.t) (new_tvar: TVarProvider.t) =
     in
     Type.apply subs t
 
+let%test_module "instantiate" = (module struct
+  let%expect_test "creates a new type" =
+    let scheme = Scheme.Forall ([], (TypeVar "a" |> locate)) in
+    instantiate scheme (TVarProvider.create ()) |> Type.to_string |> Stdio.print_endline;
+    [%expect {| a |}]
+
+  let%expect_test "creates a type with vars" =
+    let scheme = Scheme.Forall (["a"; "b"; "c"], (TypeVar "a" |> locate)) in
+    instantiate scheme (TVarProvider.create ()) |> Type.to_string |> Stdio.print_endline;
+    [%expect {| t0 |}]
+
+  let%expect_test "creates an arrow type with vars" =
+    let arrow = TypeArrow (TypeVar "a" |> locate, TypeArrow (TypeVar "b" |> locate, TypeIdent "Number" |> locate) |> locate) |> locate in
+    let scheme = Scheme.Forall (["a"; "b"], arrow) in
+    instantiate scheme (TVarProvider.create ()) |> Type.to_string |> Stdio.print_endline;
+    [%expect {| t0 -> t1 -> Number |}]
+end)
+
+
 (** Given a type variable's name, and another type, get the substitutions *)
 let var_bind name t =
   match (name, t.item) with
