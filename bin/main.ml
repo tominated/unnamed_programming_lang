@@ -2,6 +2,7 @@ open Base
 open Parser
 open Ast
 open Typechecker
+open Compiler
 
 let env =
   let vars = [
@@ -29,7 +30,8 @@ let parse lexbuf =
     | Ok t -> 
       let expr_str = Syntax.expression_to_string e in 
       let type_str = Syntax.type_signature_to_string t in
-      Stdio.printf "%s\n%s\n" expr_str type_str
+      let js_str = Js.expression_to_js e in
+      Stdio.printf "%s\n%s\n%s\n" expr_str type_str js_str
     | Error err -> Stdio.print_endline (Infer.err_to_string err)
     ) 
 
