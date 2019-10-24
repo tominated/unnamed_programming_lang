@@ -23,7 +23,7 @@
 %token <string> OPERATOR (* Operator identifier *)
 %token <float> NUMBER
 %token <string> STRING
-%token FN LET TYPE IN IF THEN ELSE MATCH WITH AS
+%token FN LET TYPE IN IF THEN ELSE MATCH WITH AS FORALL
 %token LBRACE "{"
 %token RBRACE "}"
 %token LBRACKET "["
@@ -44,6 +44,9 @@
 
 %start parse_type_signature
 %type <Ast.Syntax.type_signature> parse_type_signature
+
+%start parse_scheme
+%type <Ast.Syntax.scheme> parse_scheme
 
 %%
 
@@ -113,6 +116,7 @@ atomic_expr:
   | c=constant { ExprConstant c }
   | e=l(atomic_expr) "." id=val_ident { ExprRecordAccess (e, id) }
   | "(" elems=separated_nontrivial_llist(",", l(expr)) ")" { ExprTuple elems }
+  | "(" e=expr ")" { e }
   | "[" elems=separated_list(",", l(expr)) "]" { ExprArray elems }
   | "{" fields=separated_list(",", field_expr) base=record_expr_base? "}" {ExprRecord (fields, base) }
 
@@ -165,6 +169,14 @@ record_field_type_signature:
 
 record_extend_type_signature:
   | "|" id=LIDENT { id }
+
+(* Scheme *)
+
+parse_scheme:
+  | s=scheme EOF { s }
+
+scheme:
+  | FORALL vars=LIDENT* DOT t=l(type_signature) { Forall (vars, t) }
 
 (* STOLEN FROM OCAML SOURCE *)
 (* https://github.com/ocaml/ocaml/blob/trunk/parsing/parser.mly *)

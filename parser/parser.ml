@@ -22,6 +22,13 @@ let parse_type_signature lexbuf =
   Expression_parser.MenhirInterpreter.loop_handle
     success (fail lexbuf) supplier checkpoint
 
+let parse_scheme lexbuf =
+  let (first_pos, _) = Sedlexing.lexing_positions lexbuf in
+  let checkpoint = Expression_parser.Incremental.parse_scheme first_pos in
+  let supplier = Lexer.makeSupplier lexbuf in
+  Expression_parser.MenhirInterpreter.loop_handle
+    success (fail lexbuf) supplier checkpoint
+
 let from_string = Sedlexing.Utf8.from_string
 let test_expr s =
   from_string s

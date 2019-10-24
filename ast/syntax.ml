@@ -31,6 +31,9 @@ and type_signature_ =
   | TypeRecord of (string * type_signature) list * string option
   (* { a: T1, b: T2 | r } *)
 
+(* A forall binding *)
+and scheme = Forall of string list * type_signature
+
 (** A type that is defined before use *)
 and type_binding =
   | TypeBindAtomic of type_signature

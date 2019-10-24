@@ -34,12 +34,12 @@ end = struct
 end
 
 and Scheme: sig
-  type t = Forall of string list * Type.t
+  type t = scheme
   val apply: Substitution.t -> t -> t
   val free_type_vars: t -> StringSet.t
   val to_string: t -> string
 end = struct
-  type t = Forall of string list * Type.t
+  type t = scheme
 
   let apply (subs: Substitution.t) (scheme: t) =
     match scheme with
@@ -164,7 +164,7 @@ let generalise (env: Env.t) (t: Type.t) =
   let ftv_e = Env.free_type_vars env in
   let ftv_t = Type.free_type_vars t in
   let vars = Set.diff ftv_t ftv_e |> Set.to_list in
-  Scheme.Forall (vars, t)
+  Forall (vars, t)
 
 (* TODO: This is probably gonna conflict with type vars made in infer *)
 let instantiate (scheme: Scheme.t) (new_tvar: TVarProvider.t) =
@@ -180,18 +180,18 @@ let instantiate (scheme: Scheme.t) (new_tvar: TVarProvider.t) =
 
 let%test_module "instantiate" = (module struct
   let%expect_test "creates a new type" =
-    let scheme = Scheme.Forall ([], (TypeVar "a" |> locate)) in
+    let scheme = Forall ([], (TypeVar "a" |> locate)) in
     instantiate scheme (TVarProvider.create ()) |> Type.to_string |> Stdio.print_endline;
     [%expect {| a |}]
 
   let%expect_test "creates a type with vars" =
-    let scheme = Scheme.Forall (["a"; "b"; "c"], (TypeVar "a" |> locate)) in
+    let scheme = Forall (["a"; "b"; "c"], (TypeVar "a" |> locate)) in
     instantiate scheme (TVarProvider.create ()) |> Type.to_string |> Stdio.print_endline;
     [%expect {| t0 |}]
 
   let%expect_test "creates an arrow type with vars" =
     let arrow = TypeArrow (TypeVar "a" |> locate, TypeArrow (TypeVar "b" |> locate, TypeIdent "Number" |> locate) |> locate) |> locate in
-    let scheme = Scheme.Forall (["a"; "b"], arrow) in
+    let scheme = Forall (["a"; "b"], arrow) in
     instantiate scheme (TVarProvider.create ()) |> Type.to_string |> Stdio.print_endline;
     [%expect {| t0 -> t1 -> Number |}]
 end)
@@ -348,7 +348,7 @@ let rec infer (env: Env.t) (expr: expression) (new_tvar: TVarProvider.t): ((Subs
   )
   | ExprFn (param_id, body_expr) -> (
       let tvar = new_tvar () in
-      let fn_env = Map.set env ~key:param_id ~data:(Scheme.Forall ([], tvar)) in
+      let fn_env = Map.set env ~key:param_id ~data:(Forall ([], tvar)) in
       let%bind (subs, return_type) = infer fn_env body_expr new_tvar in
       Ok (subs, TypeArrow (Type.apply subs tvar, return_type) |> locate)
   )
@@ -396,7 +396,7 @@ let%test_module "infer_type" = (module struct
   let%expect_test "operators!" =
     let num_t = TypeIdent "Number" |> locate in
     let plus_t = TypeArrow (num_t, TypeArrow (num_t, num_t) |> locate) |> locate in
-    let env = Env.set Env.empty "+" (Scheme.Forall ([], plus_t)) in
+    let env = Env.set Env.empty "+" (Forall ([], plus_t)) in
     let const_a = ExprConstant (ConstNumber 3.) |> locate in
     let const_b = ExprConstant (ConstNumber 7.) |> locate in
     let expr = ExprInfix (const_a, "+", const_b) |> locate in

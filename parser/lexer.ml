@@ -55,6 +55,7 @@ let rec token lexbuf =
   | "match" -> MATCH
   | "with" -> WITH
   | "as" -> AS
+  | "forall" -> FORALL
   | number -> NUMBER (Float.of_string (L.Utf8.lexeme lexbuf))
   | lident -> LIDENT (L.Utf8.lexeme lexbuf)
   | uident -> UIDENT (L.Utf8.lexeme lexbuf)
