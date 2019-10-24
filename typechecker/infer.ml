@@ -363,6 +363,17 @@ let rec infer (env: Env.t) (expr: expression) (new_tvar: TVarProvider.t): ((Subs
     )
     | _ -> Error (Unimplemented "infer val binding for pattern")
   )
+  | ExprTuple exprs -> (
+    let folder (acc: ((Substitution.t * Type.t list), err) Result.t) (expr: expression) =
+      match acc with
+      | Ok (acc_subs,acc_types) ->
+        let%bind (expr_subs, expr_type) = infer env expr new_tvar in
+        Ok (Substitution.compose acc_subs expr_subs, (expr_type :: acc_types))
+      | _ -> acc
+    in
+    let%bind (subs, types) = exprs |> List.fold ~f:folder ~init:(Ok (Substitution.null, [])) in
+    Ok (subs, TypeTuple (types |> List.rev) |> locate)
+  )
   | ExprApply (fn_expr, arg_expr) -> (
     let tvar = new_tvar () in
     let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
@@ -403,4 +414,20 @@ let%test_module "infer_type" = (module struct
     infer_type env expr
     |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
     [%expect {| Number |}]
+
+  let%expect_test "infers a simple tuple" =
+    let const_a = ExprConstant (ConstNumber 5.) |> locate in
+    let const_b = ExprConstant (ConstString "test") |> locate in
+    let tuple = ExprTuple [const_a; const_b] |> locate in
+    infer_type (Env.empty) tuple
+    |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
+    [%expect {| (Number, String) |}] 
+
+  let%expect_test "infers tuple with a function member" =
+    let fn = ExprFn ("a", locate ExprUnit) |> locate in
+    let const = ExprConstant (ConstNumber 5.) |> locate in
+    let tuple = ExprTuple [const; fn] |> locate in
+    infer_type (Env.empty) tuple
+    |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
+    [%expect {| (Number, t0 -> ()) |}] 
 end)
