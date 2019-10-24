@@ -16,8 +16,8 @@ type constant =
 (** A type signature *)
 and type_signature = type_signature_ located
 and type_signature_ =
-  | TypeAny
-  (* _ *)
+  | TypeUnit
+  (* () *)
   | TypeVar of string
   (* a *)
   | TypeIdent of string
@@ -30,6 +30,9 @@ and type_signature_ =
   (* (T1, T2) *)
   | TypeRecord of (string * type_signature) list * string option
   (* { a: T1, b: T2 | r } *)
+
+(* A forall binding *)
+and scheme = Forall of string list * type_signature
 
 (** A type that is defined before use *)
 and type_binding =
@@ -69,9 +72,9 @@ and expression_ =
   (* let P1 = E1 in E2 *)
   | ExprTypeBinding of string * string list * type_binding * expression
   (* type L a = T in E *)
-  | ExprFn of string list * expression
+  | ExprFn of string * expression
   (* fn P1 -> E1 *)
-  | ExprApply of expression * expression list
+  | ExprApply of expression * expression
   (* E1 E2 E3 *)
   | ExprInfix of expression * string * expression
   (* E1 op E2 *)
@@ -96,7 +99,7 @@ and expression_ =
 
 let rec type_signature_to_string ts =
   match ts.item with
-  | TypeAny -> "_"
+  | TypeUnit -> "()"
   | TypeVar x -> x
   | TypeIdent x -> x
   | TypeConstructor (x, xs) ->
@@ -193,12 +196,10 @@ let rec expression_to_string e =
       let args = String.concat (List.map ~f:(fun n -> Printf.sprintf " %s" n) a) in
       Printf.sprintf "type %s%s = %s in %s"
         n args (type_binding_to_string b) (expression_to_string e)
-  | ExprFn (args, e) ->
-      Printf.sprintf "fn %s -> %s" (String.concat ~sep:" " args) (expression_to_string e)
-  | ExprApply (e, args) ->
-      Printf.sprintf "%s %s"
-        (expression_to_string e)
-        (String.concat ~sep:" " (List.map ~f:expression_to_string args))
+  | ExprFn (arg, e) ->
+      Printf.sprintf "fn %s -> %s" arg (expression_to_string e)
+  | ExprApply (e, arg) ->
+      Printf.sprintf "%s %s" (expression_to_string e) (expression_to_string arg)
   | ExprInfix (lhs, op, rhs) ->
       Printf.sprintf "%s %s %s" (expression_to_string lhs) op (expression_to_string rhs)
   | ExprMatch (e, cs) ->

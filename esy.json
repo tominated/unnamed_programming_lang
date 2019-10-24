@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "description": "",
   "license": "MIT",
-  "esy": { "build": "refmterr dune build -p #{self.name}" },
+  "esy": {
+    "build": "refmterr dune build -p #{self.name}"
+  },
   "scripts": {
     "test": "dune runtest",
     "watch": "dune build -p #{self.name} --watch",
@@ -15,6 +17,7 @@
     "@opam/dune": "*",
     "@opam/merlin": "*",
     "@opam/menhir": "*",
+    "@opam/ppx_let": "*",
     "@opam/ppx_expect": "v0.12.0",
     "@opam/ppx_inline_test": "*",
     "@opam/ppx_sexp_conv": "*",

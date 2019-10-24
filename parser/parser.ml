@@ -22,6 +22,13 @@ let parse_type_signature lexbuf =
   Expression_parser.MenhirInterpreter.loop_handle
     success (fail lexbuf) supplier checkpoint
 
+let parse_scheme lexbuf =
+  let (first_pos, _) = Sedlexing.lexing_positions lexbuf in
+  let checkpoint = Expression_parser.Incremental.parse_scheme first_pos in
+  let supplier = Lexer.makeSupplier lexbuf in
+  Expression_parser.MenhirInterpreter.loop_handle
+    success (fail lexbuf) supplier checkpoint
+
 let from_string = Sedlexing.Utf8.from_string
 let test_expr s =
   from_string s
@@ -46,4 +53,15 @@ let%test_module "parse_expression" = (module struct
   let%expect_test "value binding" =
     test_expr "let x = 1 in x";
     [%expect {| let x = 1.000000 in x |}]
+
+  let%expect_test "should parse a basic multiline program" =
+    test_expr {|
+    let f = fn x -> x in
+    let y = 3 in 
+    let x=4 in 
+    f x+y
+    f 3 + 4
+    |};
+    [%expect {| let f = fn x -> x in let y = 3.000000 in let x = 4.000000 in f x + y f 3.000000 + 4.000000 |}]
+
 end)
