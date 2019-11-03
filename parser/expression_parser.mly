@@ -154,12 +154,12 @@ parse_type_signature:
 type_signature:
   | t=atomic_type { t }
   | lhs=l(atomic_type) "->" rhs=l(type_signature) { TypeArrow (lhs, rhs) }
+  | t=l(atomic_type) ts=nonempty_list(l(type_signature)) { TypeConstructor (t, ts) }
 
 atomic_type:
   | "(" ts=separated_nontrivial_llist(",", l(atomic_type)) ")" { TypeTuple ts }
   | "{" fs=record_field_type_signature+ ext=record_extend_type_signature? "}"
       { TypeRecord (fs, ext) }
-  | t=UIDENT ts=nonempty_list(l(type_signature)) { TypeConstructor (t, ts) }
   | "(" t=type_signature ")" { t }
   | LIDENT { TypeVar $1 }
   | UIDENT { TypeIdent $1 }

@@ -22,7 +22,7 @@ and type_signature_ =
   (* a *)
   | TypeIdent of string
   (* MyType *)
-  | TypeConstructor of string * type_signature list
+  | TypeConstructor of type_signature * type_signature list
   (* Constructor T1 T2 *)
   | TypeArrow of type_signature * type_signature
   (* T1 -> T2 *)
@@ -104,7 +104,7 @@ let rec type_signature_to_string ts =
   | TypeIdent x -> x
   | TypeConstructor (x, xs) ->
       let args = List.map ~f:type_signature_to_string xs in
-      Printf.sprintf "%s %s" x (String.concat ~sep:" " args)
+      Printf.sprintf "%s %s" (type_signature_to_string x) (String.concat ~sep:" " args)
   | TypeArrow (a,b) -> Printf.sprintf "%s -> %s" (type_signature_to_string a) (type_signature_to_string b)
   | TypeTuple xs ->
       let vals = String.concat ~sep:", " (List.map ~f:type_signature_to_string xs) in

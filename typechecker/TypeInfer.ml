@@ -3,130 +3,6 @@ open Ast.Syntax
 
 open Result.Let_syntax
 
-module StringMap = Map.M (String)
-module StringSet = Set.M (String)
-
-module rec Substitution: sig
-  type t = Type.t StringMap.t
-  val null: t
-  val singleton: string -> Type.t -> t
-  val to_string: t -> string
-  val compose: t -> t -> t
-end = struct
-  type t = Type.t StringMap.t
-
-  let null : t = Map.empty (module String)
-  let singleton s t : t = Map.singleton (module String) s t
-
-  let to_string (s: t) =
-    Map.to_alist s
-    |> List.map ~f:(fun (v, t) -> Printf.sprintf "%s = %s" v (Type.to_string t))
-    |> String.concat ~sep:", "
-
-
-  (** Given two substitutions, merge them and try to apply any possible substitutions *)
-  let compose (s1: t) (s2: t) =
-    Map.merge
-      ~f:(fun ~key:_ x -> match x with `Left v | `Right v | `Both (_, v) -> Some v)
-      (Map.map ~f:(Type.apply s1) s2)
-      s1
-
-end
-
-and Scheme: sig
-  type t = scheme
-  val apply: Substitution.t -> t -> t
-  val free_type_vars: t -> StringSet.t
-  val to_string: t -> string
-end = struct
-  type t = scheme
-
-  let apply (subs: Substitution.t) (scheme: t) =
-    match scheme with
-    | Forall (vars, t) ->
-      let subs_ = vars |> List.fold ~init:subs ~f:Map.remove in
-      Forall (vars, Type.apply subs_ t)
-
-  let free_type_vars (scheme: t): StringSet.t =
-    match scheme with
-    | Forall (vars, t) ->
-      let ftv_s = Set.of_list (module String) vars in
-      let ftv_t = Type.free_type_vars t in
-      Set.diff ftv_s ftv_t
-
-  let to_string (scheme: t): string =
-    match scheme with
-    | Forall (vars, t) ->
-        Printf.sprintf "forall %s. %s"
-          (String.concat ~sep:" " vars)
-          (Type.to_string t)
-
-end
-
-and Env: sig
-  type t = Scheme.t StringMap.t
-  val empty: t
-  val set: t -> string -> Scheme.t -> t
-  val find: t -> string -> Scheme.t option
-  val remove: t -> string -> t
-  val apply: Substitution.t -> t -> t
-  val free_type_vars: t -> StringSet.t
-end = struct
-  type t = Scheme.t StringMap.t
-
-  let empty: t = Map.empty (module String)
-  let set (m: t) (k: String.t) (v: Scheme.t): t = Map.set m ~key:k ~data:v
-  let find (m: t) (k: String.t): Scheme.t Option.t = Map.find m k
-  let remove (m: t) (k: String.t): t = Map.remove m k
-
-  let apply (subs: Substitution.t) (env: t): t =
-    env |> Map.map ~f:(Scheme.apply subs)
-
-  let free_type_vars (env: t): StringSet.t =
-    Map.data env
-    |> List.fold ~f:(fun set scheme -> Set.union set (Scheme.free_type_vars scheme)) ~init:(Set.empty (module String))
-end
-
-and Type: sig
-  type t = type_signature
-  val apply: Substitution.t -> t -> t
-  val free_type_vars: t -> StringSet.t
-  val to_string: t -> string
-end = struct
-  type t = type_signature
-
-  (** Apply substitutions to a type *)
-  let rec apply (subst: Substitution.t) (t: t) =
-    match t.item with
-    | TypeVar v ->
-      Map.find subst v |> Option.value ~default:t
-    | TypeArrow (t1, t2) -> {
-        item = TypeArrow (apply subst t1, apply subst t2);
-        location = t.location
-      }
-    | TypeTuple ts -> {
-        item = TypeTuple (List.map ~f:(apply subst) ts);
-        location = t.location;
-      }
-    | TypeConstructor (n, ts) -> {
-        item = TypeConstructor (n, List.map ~f:(apply subst) ts);
-        location = t.location;
-      }
-    | _ -> t
-
-  let rec free_type_vars (t: t): StringSet.t =
-    match t.item with
-    | TypeVar a -> Set.singleton (module String) a
-    | TypeArrow (t1, t2) ->
-        Set.union (free_type_vars t1) (free_type_vars t2)
-    | TypeTuple ts ->
-        ts |> List.map ~f:free_type_vars |> Set.union_list (module String)
-    | _ -> Set.empty (module String)
-
-  let to_string = type_signature_to_string
-
-end
-
 module TVarProvider = struct
   type t = unit -> Type.t
 
@@ -138,6 +14,11 @@ module TVarProvider = struct
       TypeVar (Printf.sprintf "t%d" id) |> locate
 end
 
+type env = {
+  type_env: TypeEnv.t;
+  kind_env: KindEnv.t;
+}
+
 type location = Lexing.position * Lexing.position
 
 type err =
@@ -145,6 +26,8 @@ type err =
   | InfiniteType
   | UnequalLengths
   | TypeMismatch of Type.t * Type.t
+  | KindError of KindInfer.err
+  | NotFullyApplied of Type.t
   | Unimplemented of string
 
 let err_to_string e =
@@ -156,12 +39,14 @@ let err_to_string e =
       Printf.sprintf "Cannot unify '%s' with '%s'"
         (Type.to_string a)
         (Type.to_string b)
+  | KindError e -> KindInfer.err_to_string e
+  | NotFullyApplied t -> Printf.sprintf "Type '%s' has not been fully applied" (Type.to_string t)
   | Unimplemented s -> Printf.sprintf "Unimplemented: %s" s
 
 let locate (p: 'a) : 'a located = { item = p; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
 
-let generalise (env: Env.t) (t: Type.t) =
-  let ftv_e = Env.free_type_vars env in
+let generalise (env: TypeEnv.t) (t: Type.t) =
+  let ftv_e = TypeEnv.free_type_vars env in
   let ftv_t = Type.free_type_vars t in
   let vars = Set.diff ftv_t ftv_e |> Set.to_list in
   Forall (vars, t)
@@ -172,11 +57,11 @@ let instantiate (scheme: Scheme.t) (new_tvar: TVarProvider.t) =
   | Forall (vars, t) ->
     let subs =
       List.fold
-        ~init:Substitution.null
+        ~init:TypeSubst.null
         ~f:(fun acc v -> Map.set acc ~key:v ~data:(new_tvar ()))
         vars
     in
-    Type.apply subs t
+    TypeSubst.type_apply subs t
 
 let%test_module "instantiate" = (module struct
   let%expect_test "creates a new type" =
@@ -202,14 +87,14 @@ let var_bind name t =
   match (name, t.item) with
   (* If name is the same as a TypeVar then we don't know any substitutions *)
   | name, TypeVar m when String.equal name m ->
-      Ok Substitution.null
+      Ok TypeSubst.null
 
   (* If name is found in the free type variables of t, then it fails the occurs check *)
   | name, _ when Set.mem (Type.free_type_vars t) name ->
       Error InfiniteType
 
   (* Otherwise substitute name with the type *)
-  | _ -> Ok (Substitution.singleton name t)
+  | _ -> Ok (TypeSubst.singleton name t)
 
 let%test_module "var_bind" = (module struct
   let%expect_test "name and type var are equal" =
@@ -244,11 +129,10 @@ let rec unify (t1: Type.t) (t2: Type.t) =
   | TypeVar n, _ -> var_bind n t2
 
   | TypeIdent x, TypeIdent y when String.equal x y ->
-      Ok Substitution.null
+      Ok TypeSubst.null
 
-  | TypeConstructor (x, x_args), TypeConstructor (y, y_args)
-    when String.equal x y ->
-      unify_lists x_args y_args
+  | TypeConstructor (x, x_args), TypeConstructor (y, y_args) ->
+      unify_lists (x :: x_args) (y :: y_args)
 
   | TypeTuple xs, TypeTuple ys -> unify_lists xs ys
 
@@ -259,10 +143,10 @@ let rec unify (t1: Type.t) (t2: Type.t) =
 and unify_lists xs ys =
   let folder acc x y =
     let%bind s1 = acc in
-    let%map s2 = unify (Type.apply s1 x) (Type.apply s1 y) in
-    Substitution.compose s2 s1
+    let%map s2 = unify (TypeSubst.type_apply s1 x) (TypeSubst.type_apply s1 y) in
+    TypeSubst.compose s2 s1
   in
-  match List.fold2 ~f:folder ~init:(Ok Substitution.null) xs ys with
+  match List.fold2 ~f:folder ~init:(Ok TypeSubst.null) xs ys with
   | Ok x -> x
   | _ -> Error UnequalLengths
 
@@ -290,7 +174,7 @@ let%test_module "unify" = (module struct
     let t1 = locate (TypeArrow (locate (TypeVar "a"), locate (TypeArrow (locate (TypeIdent "String"), locate (TypeIdent "Bool"))))) in
     let t2 = locate (TypeArrow (locate (TypeIdent "Int"), locate (TypeArrow (locate (TypeVar "b"), locate (TypeIdent "Bool"))))) in
     unify t1 t2
-    |> Result.iter ~f:(fun s -> Substitution.to_string s |> Stdio.print_endline);
+    |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = String |}]
 
   let%expect_test "Does not unify two arrows that are different" =
@@ -314,10 +198,11 @@ let%test_module "unify" = (module struct
   let%expect_test "Can unify a generic and specialised constructor" =
     let args1 = [locate (TypeVar "a"); locate (TypeIdent "Bool"); locate (TypeVar "c")] in
     let args2 = [locate (TypeIdent "Int"); locate (TypeVar "b"); locate (TypeIdent "String")] in
-    let t1 = locate (TypeConstructor ("Test", args1)) in
-    let t2 = locate (TypeConstructor ("Test", args2)) in
+    let const = locate (TypeIdent "Test") in
+    let t1 = locate (TypeConstructor (const, args1)) in
+    let t2 = locate (TypeConstructor (const, args2)) in
     unify t1 t2
-    |> Result.iter ~f:(fun s -> Substitution.to_string s |> Stdio.print_endline);
+    |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = Bool, c = String |}]
 
   let%expect_test "Can unify a generic and specialised tuple" =
@@ -326,81 +211,92 @@ let%test_module "unify" = (module struct
     let t1 = locate (TypeTuple xs) in
     let t2 = locate (TypeTuple ys) in
     unify t1 t2
-    |> Result.iter ~f:(fun s -> Substitution.to_string s |> Stdio.print_endline);
+    |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = Bool, c = String |}]
 end)
 
-let rec infer (env: Env.t) (expr: expression) (new_tvar: TVarProvider.t): ((Substitution.t * Type.t), err) Result.t =
+let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
   match expr.item with
   | ExprUnit ->
-      Ok (Substitution.null, locate TypeUnit)
+      Ok (TypeSubst.null, locate TypeUnit)
   | ExprConstant const ->
     Ok (
-      Substitution.null,
+      TypeSubst.null,
       match const with
       | ConstNumber _ -> locate (TypeIdent "Number")
       | ConstString _ -> locate (TypeIdent "String")
      )
   | ExprIdent id -> (
-      match (Map.find env id) with
-      | Some t -> Ok (Substitution.null, instantiate t new_tvar)
+      match (TypeEnv.lookup env.type_env id) with
+      | Some t -> Ok (TypeSubst.null, instantiate t new_tvar)
       | None -> Error (VariableNotFound { id; location = expr.location })
   )
   | ExprFn (param_id, body_expr) -> (
       let tvar = new_tvar () in
-      let fn_env = Map.set env ~key:param_id ~data:(Forall ([], tvar)) in
+      let fn_env = { env with type_env = TypeEnv.extend env.type_env param_id (Forall ([], tvar)) } in
       let%bind (subs, return_type) = infer fn_env body_expr new_tvar in
-      Ok (subs, TypeArrow (Type.apply subs tvar, return_type) |> locate)
+      Ok (subs, TypeArrow (TypeSubst.type_apply subs tvar, return_type) |> locate)
   )
   | ExprValBinding (pattern, value_expr, body_expr) -> (
     match pattern.item with
     | PatternVar var_name -> (
       let%bind (value_subs, value_type) = infer env value_expr new_tvar in
-      let env_ = Env.apply value_subs env in
-      let value_type_ = generalise env_ value_type in
-      let%bind (body_subs, body_type) = infer (Env.set env_ var_name value_type_) body_expr new_tvar in
-      Ok (Substitution.compose value_subs body_subs, body_type)
+      let bound_env = TypeSubst.env_apply value_subs env.type_env in
+      let value_type_gen = generalise bound_env value_type in
+      let%bind (body_subs, body_type) = infer { env with type_env = (TypeEnv.extend bound_env var_name value_type_gen) } body_expr new_tvar in
+      Ok (TypeSubst.compose value_subs body_subs, body_type)
     )
     | _ -> Error (Unimplemented "infer val binding for pattern")
   )
   | ExprApply (fn_expr, arg_expr) -> (
     let tvar = new_tvar () in
     let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
-    let%bind (body_subs, body_type) = infer (Env.apply fn_subs env) arg_expr new_tvar in
-    let%bind rt_subs = unify (Type.apply body_subs fn_type) (TypeArrow (body_type, tvar) |> locate) in
-    Ok (Substitution.compose rt_subs (Substitution.compose body_subs fn_subs), Type.apply rt_subs tvar)
+    let%bind (body_subs, body_type) = infer {env with type_env = (TypeSubst.env_apply fn_subs env.type_env) } arg_expr new_tvar in
+    let%bind rt_subs = unify (TypeSubst.type_apply body_subs fn_type) (TypeArrow (body_type, tvar) |> locate) in
+    Ok (TypeSubst.compose rt_subs (TypeSubst.compose body_subs fn_subs), TypeSubst.type_apply rt_subs tvar)
   )
   | ExprInfix (lhs, op, rhs) -> (
+    let rt_t = new_tvar () in
     let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
     let%bind (rhs_subs, rhs_t) = infer env rhs new_tvar in
     let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
-    let tvar = new_tvar () in
-    let%bind rt_subs = unify (TypeArrow (lhs_t, (TypeArrow (rhs_t, tvar) |> locate)) |> locate) op_t in
-    Ok (Substitution.compose lhs_subs (Substitution.compose rhs_subs rt_subs), Type.apply rt_subs tvar)
+    let%bind rt_subs = unify (TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate) op_t in
+    Ok (TypeSubst.compose lhs_subs (TypeSubst.compose rhs_subs rt_subs), TypeSubst.type_apply rt_subs rt_t)
   )
   | _ -> Error (Unimplemented "infer")
 
+(** We only want scalar kinds once we're done with type checking *)
+let check_kind (env: KindEnv.t) (t: Type.t) : (unit, err) Result.t =
+  let%bind kind =
+    KindInfer.infer_kind env t
+    |> Result.map_error ~f:(fun e -> KindError e)
+  in
+  if Kind.is_scalar kind
+  then Ok ()
+  else Error (NotFullyApplied t)
 
-let infer_type (env: Env.t) (expr: expression): (Type.t, err) Result.t =
-  infer env expr (TVarProvider.create ()) |> Result.map ~f:(fun (subs, t) -> Type.apply subs t)
+let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
+  let%bind (subs, t) = infer env expr (TVarProvider.create ()) in
+  let%bind _ = check_kind env.kind_env t in
+  Ok (TypeSubst.type_apply subs t)
 
 let%test_module "infer_type" = (module struct
   let%expect_test "first try" =
     let const = ExprConstant (ConstNumber 3.) |> locate in
     let fn = ExprFn ("a", locate ExprUnit) |> locate in
     let app = ExprApply (fn, const) |> locate in
-    infer_type (Env.empty) app
+    infer_type { kind_env = KindEnv.empty; type_env = TypeEnv.empty } app
     |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
     [%expect {| () |}]
 
   let%expect_test "operators!" =
     let num_t = TypeIdent "Number" |> locate in
     let plus_t = TypeArrow (num_t, TypeArrow (num_t, num_t) |> locate) |> locate in
-    let env = Env.set Env.empty "+" (Forall ([], plus_t)) in
+    let type_env = TypeEnv.extend TypeEnv.empty "+" (Forall ([], plus_t)) in
     let const_a = ExprConstant (ConstNumber 3.) |> locate in
     let const_b = ExprConstant (ConstNumber 7.) |> locate in
     let expr = ExprInfix (const_a, "+", const_b) |> locate in
-    infer_type env expr
+    infer_type { kind_env = KindEnv.empty; type_env } expr
     |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
     [%expect {| Number |}]
 end)

@@ -3,7 +3,14 @@ open Parser
 open Ast
 open Typechecker
 
-let env =
+let kind_env = KindEnv.of_alist_exn [
+  ("Number", KindType);
+  ("Boolean", KindType);
+  ("List", KindArrow(KindType, KindType));
+  ("Result", KindArrow(KindType, KindArrow(KindType, KindType)));
+]
+
+let type_env =
   let vars = [
     ("id", "forall a. a -> a");
     ("+", "forall . Number -> Number -> Number");
@@ -17,21 +24,21 @@ let env =
   let parse_and_add env (id, body) =
     let buf = Sedlexing.Utf8.from_string body in
     match Parser.parse_scheme buf with
-    | Ok scheme -> Infer.Env.set env id scheme
+    | Ok scheme -> TypeEnv.extend env id scheme
     | Error e -> failwith e
   in
-  List.fold ~init:Infer.Env.empty ~f:parse_and_add vars
+  List.fold ~init:TypeEnv.empty ~f:parse_and_add vars
 
 let parse lexbuf =
   match (Parser.parse_expression lexbuf) with
-  | Ok e -> 
-    (match (Infer.infer_type env e) with
-    | Ok t -> 
-      let expr_str = Syntax.expression_to_string e in 
+  | Ok e ->
+    (match (TypeInfer.infer_type { kind_env; type_env } e) with
+    | Ok t ->
+      let expr_str = Syntax.expression_to_string e in
       let type_str = Syntax.type_signature_to_string t in
       Stdio.printf "%s\n%s\n" expr_str type_str
-    | Error err -> Stdio.print_endline (Infer.err_to_string err)
-    ) 
+    | Error err -> Stdio.print_endline (TypeInfer.err_to_string err)
+    )
 
   | Error msg -> msg |> Stdio.print_endline
 
