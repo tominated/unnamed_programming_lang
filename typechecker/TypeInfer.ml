@@ -26,6 +26,8 @@ type err =
   | InfiniteType
   | UnequalLengths
   | TypeMismatch of Type.t * Type.t
+  | KindError of KindInfer.err
+  | NotFullyApplied of Type.t
   | Unimplemented of string
 
 let err_to_string e =
@@ -37,6 +39,8 @@ let err_to_string e =
       Printf.sprintf "Cannot unify '%s' with '%s'"
         (Type.to_string a)
         (Type.to_string b)
+  | KindError e -> KindInfer.err_to_string e
+  | NotFullyApplied t -> Printf.sprintf "Type '%s' has not been fully applied" (Type.to_string t)
   | Unimplemented s -> Printf.sprintf "Unimplemented: %s" s
 
 let locate (p: 'a) : 'a located = { item = p; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
@@ -261,9 +265,20 @@ let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSu
   )
   | _ -> Error (Unimplemented "infer")
 
+(** We only want scalar kinds once we're done with type checking *)
+let check_kind (env: KindEnv.t) (t: Type.t) : (unit, err) Result.t =
+  let%bind kind =
+    KindInfer.infer_kind env t
+    |> Result.map_error ~f:(fun e -> KindError e)
+  in
+  if Kind.is_scalar kind
+  then Ok ()
+  else Error (NotFullyApplied t)
 
 let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
-  infer env expr (TVarProvider.create ()) |> Result.map ~f:(fun (subs, t) -> TypeSubst.type_apply subs t)
+  let%bind (subs, t) = infer env expr (TVarProvider.create ()) in
+  let%bind _ = check_kind env.kind_env t in
+  Ok (TypeSubst.type_apply subs t)
 
 let%test_module "infer_type" = (module struct
   let%expect_test "first try" =

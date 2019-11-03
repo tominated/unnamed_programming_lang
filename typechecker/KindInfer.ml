@@ -3,10 +3,21 @@ open Base
 open Result.Let_syntax
 
 type err =
-  | KindNotFound
-  | KindMismatch
+  | KindNotFound of string
+  | KindMismatch of Kind.t * Kind.t
   | InfiniteKind
   | Unimplemented
+
+let err_to_string (e: err) =
+  match e with
+  | KindNotFound id -> Printf.sprintf "Type %s not found" id
+  | KindMismatch (a, b) ->
+      Printf.sprintf "Cannot unify '%s' with '%s'"
+        (Kind.to_string a)
+        (Kind.to_string b)
+  | InfiniteKind -> "Infinite Kind"
+  | Unimplemented -> "Unimplemented"
+
 
 module KVarProvider = struct
   type t = unit -> Kind.t
@@ -35,7 +46,7 @@ let rec unify (k1: Kind.t) (k2: Kind.t) =
       let%bind s1 = unify l1 l2 in
       let%map s2 = unify (KindSubst.kind_apply s1 r1) (KindSubst.kind_apply s1 r2) in
       KindSubst.compose s2 s1
-  | _ -> Error KindMismatch
+  | _ -> Error (KindMismatch (k1, k2))
 
 let rec infer (env: KindEnv.t) (t: Type.t) (new_kvar: KVarProvider.t) =
   match t.item with
@@ -43,7 +54,7 @@ let rec infer (env: KindEnv.t) (t: Type.t) (new_kvar: KVarProvider.t) =
   | TypeIdent id ->
       KindEnv.lookup env id
       |> Option.map ~f:(fun k -> (KindSubst.null, k))
-      |> Result.of_option ~error:KindNotFound
+      |> Result.of_option ~error:(KindNotFound id)
   | TypeConstructor (c, args) ->
     let return_kind = new_kvar () in
     let%bind c_infer = infer env c new_kvar in
