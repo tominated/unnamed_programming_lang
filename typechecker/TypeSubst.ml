@@ -16,17 +16,14 @@ let rec type_apply (subst: t) (t: Type.t) : Type.t =
   match t.item with
   | TypeVar v ->
     Map.find subst v |> Option.value ~default:t
-  | TypeArrow (t1, t2) -> {
+  | TypeArrow (t1, t2) -> { t with
       item = TypeArrow (type_apply subst t1, type_apply subst t2);
-      location = t.location
     }
-  | TypeTuple ts -> {
+  | TypeTuple ts -> { t with
       item = TypeTuple (List.map ~f:(type_apply subst) ts);
-      location = t.location;
     }
-  | TypeConstructor (n, ts) -> {
+  | TypeConstructor (n, ts) -> { t with
       item = TypeConstructor (n, List.map ~f:(type_apply subst) ts);
-      location = t.location;
     }
   | _ -> t
 

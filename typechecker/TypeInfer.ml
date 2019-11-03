@@ -3,9 +3,6 @@ open Ast.Syntax
 
 open Result.Let_syntax
 
-module StringMap = Map.M (String)
-module StringSet = Set.M (String)
-
 module TVarProvider = struct
   type t = unit -> Type.t
 
@@ -125,9 +122,8 @@ let rec unify (t1: Type.t) (t2: Type.t) =
   | TypeIdent x, TypeIdent y when String.equal x y ->
       Ok TypeSubst.null
 
-  | TypeConstructor (x, x_args), TypeConstructor (y, y_args)
-    when String.equal x y ->
-      unify_lists x_args y_args
+  | TypeConstructor (x, x_args), TypeConstructor (y, y_args) ->
+      unify_lists (x :: x_args) (y :: y_args)
 
   | TypeTuple xs, TypeTuple ys -> unify_lists xs ys
 
@@ -193,8 +189,9 @@ let%test_module "unify" = (module struct
   let%expect_test "Can unify a generic and specialised constructor" =
     let args1 = [locate (TypeVar "a"); locate (TypeIdent "Bool"); locate (TypeVar "c")] in
     let args2 = [locate (TypeIdent "Int"); locate (TypeVar "b"); locate (TypeIdent "String")] in
-    let t1 = locate (TypeConstructor ("Test", args1)) in
-    let t2 = locate (TypeConstructor ("Test", args2)) in
+    let const = locate (TypeIdent "Test") in
+    let t1 = locate (TypeConstructor (const, args1)) in
+    let t2 = locate (TypeConstructor (const, args2)) in
     unify t1 t2
     |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = Bool, c = String |}]
