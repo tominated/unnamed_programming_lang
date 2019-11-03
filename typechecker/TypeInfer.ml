@@ -14,6 +14,11 @@ module TVarProvider = struct
       TypeVar (Printf.sprintf "t%d" id) |> locate
 end
 
+type env = {
+  type_env: TypeEnv.t;
+  kind_env: KindEnv.t;
+}
+
 type location = Lexing.position * Lexing.position
 
 type err =
@@ -206,7 +211,7 @@ let%test_module "unify" = (module struct
     [%expect {| a = Int, b = Bool, c = String |}]
 end)
 
-let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
+let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
   match expr.item with
   | ExprUnit ->
       Ok (TypeSubst.null, locate TypeUnit)
@@ -218,13 +223,13 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
       | ConstString _ -> locate (TypeIdent "String")
      )
   | ExprIdent id -> (
-      match (Map.find env id) with
+      match (TypeEnv.lookup env.type_env id) with
       | Some t -> Ok (TypeSubst.null, instantiate t new_tvar)
       | None -> Error (VariableNotFound { id; location = expr.location })
   )
   | ExprFn (param_id, body_expr) -> (
       let tvar = new_tvar () in
-      let fn_env = Map.set env ~key:param_id ~data:(Forall ([], tvar)) in
+      let fn_env = { env with type_env = TypeEnv.extend env.type_env param_id (Forall ([], tvar)) } in
       let%bind (subs, return_type) = infer fn_env body_expr new_tvar in
       Ok (subs, TypeArrow (TypeSubst.type_apply subs tvar, return_type) |> locate)
   )
@@ -232,9 +237,9 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
     match pattern.item with
     | PatternVar var_name -> (
       let%bind (value_subs, value_type) = infer env value_expr new_tvar in
-      let env_ = TypeSubst.env_apply value_subs env in
-      let value_type_ = generalise env_ value_type in
-      let%bind (body_subs, body_type) = infer (TypeEnv.extend env_ var_name value_type_) body_expr new_tvar in
+      let bound_env = TypeSubst.env_apply value_subs env.type_env in
+      let value_type_gen = generalise bound_env value_type in
+      let%bind (body_subs, body_type) = infer { env with type_env = (TypeEnv.extend bound_env var_name value_type_gen) } body_expr new_tvar in
       Ok (TypeSubst.compose value_subs body_subs, body_type)
     )
     | _ -> Error (Unimplemented "infer val binding for pattern")
@@ -242,22 +247,22 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
   | ExprApply (fn_expr, arg_expr) -> (
     let tvar = new_tvar () in
     let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
-    let%bind (body_subs, body_type) = infer (TypeSubst.env_apply fn_subs env) arg_expr new_tvar in
+    let%bind (body_subs, body_type) = infer {env with type_env = (TypeSubst.env_apply fn_subs env.type_env) } arg_expr new_tvar in
     let%bind rt_subs = unify (TypeSubst.type_apply body_subs fn_type) (TypeArrow (body_type, tvar) |> locate) in
     Ok (TypeSubst.compose rt_subs (TypeSubst.compose body_subs fn_subs), TypeSubst.type_apply rt_subs tvar)
   )
   | ExprInfix (lhs, op, rhs) -> (
+    let rt_t = new_tvar () in
     let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
     let%bind (rhs_subs, rhs_t) = infer env rhs new_tvar in
     let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
-    let tvar = new_tvar () in
-    let%bind rt_subs = unify (TypeArrow (lhs_t, (TypeArrow (rhs_t, tvar) |> locate)) |> locate) op_t in
-    Ok (TypeSubst.compose lhs_subs (TypeSubst.compose rhs_subs rt_subs), TypeSubst.type_apply rt_subs tvar)
+    let%bind rt_subs = unify (TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate) op_t in
+    Ok (TypeSubst.compose lhs_subs (TypeSubst.compose rhs_subs rt_subs), TypeSubst.type_apply rt_subs rt_t)
   )
   | _ -> Error (Unimplemented "infer")
 
 
-let infer_type (env: TypeEnv.t) (expr: expression): (Type.t, err) Result.t =
+let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
   infer env expr (TVarProvider.create ()) |> Result.map ~f:(fun (subs, t) -> TypeSubst.type_apply subs t)
 
 let%test_module "infer_type" = (module struct
@@ -265,18 +270,18 @@ let%test_module "infer_type" = (module struct
     let const = ExprConstant (ConstNumber 3.) |> locate in
     let fn = ExprFn ("a", locate ExprUnit) |> locate in
     let app = ExprApply (fn, const) |> locate in
-    infer_type (TypeEnv.empty) app
+    infer_type { kind_env = KindEnv.empty; type_env = TypeEnv.empty } app
     |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
     [%expect {| () |}]
 
   let%expect_test "operators!" =
     let num_t = TypeIdent "Number" |> locate in
     let plus_t = TypeArrow (num_t, TypeArrow (num_t, num_t) |> locate) |> locate in
-    let env = TypeEnv.extend TypeEnv.empty "+" (Forall ([], plus_t)) in
+    let type_env = TypeEnv.extend TypeEnv.empty "+" (Forall ([], plus_t)) in
     let const_a = ExprConstant (ConstNumber 3.) |> locate in
     let const_b = ExprConstant (ConstNumber 7.) |> locate in
     let expr = ExprInfix (const_a, "+", const_b) |> locate in
-    infer_type env expr
+    infer_type { kind_env = KindEnv.empty; type_env } expr
     |> Result.iter ~f:(fun t -> Type.to_string t |> Stdio.print_endline);
     [%expect {| Number |}]
 end)

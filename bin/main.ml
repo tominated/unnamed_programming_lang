@@ -3,7 +3,14 @@ open Parser
 open Ast
 open Typechecker
 
-let env =
+let kind_env = KindEnv.of_alist_exn [
+  ("Number", KindType);
+  ("Boolean", KindType);
+  ("List", KindArrow(KindType, KindType));
+  ("Result", KindArrow(KindType, KindArrow(KindType, KindType)));
+]
+
+let type_env =
   let vars = [
     ("id", "forall a. a -> a");
     ("+", "forall . Number -> Number -> Number");
@@ -25,7 +32,7 @@ let env =
 let parse lexbuf =
   match (Parser.parse_expression lexbuf) with
   | Ok e ->
-    (match (TypeInfer.infer_type env e) with
+    (match (TypeInfer.infer_type { kind_env; type_env } e) with
     | Ok t ->
       let expr_str = Syntax.expression_to_string e in
       let type_str = Syntax.type_signature_to_string t in
