@@ -16,7 +16,7 @@ let rec kind_apply (subs: t) (k: Kind.t) : Kind.t =
   | KindVar v -> Map.find subs v |> Option.value ~default:k
   | KindArrow (k1, k2) ->
       KindArrow (kind_apply subs k1, kind_apply subs k2)
-  | KindType -> k
+  | KindType | KindRow -> k
 
 let env_apply (subs: t) (env: KindEnv.t) : KindEnv.t =
     env |> Map.map ~f:(kind_apply subs)

@@ -70,8 +70,8 @@ let rec infer (env: KindEnv.t) (t: Type.t) (new_kvar: KVarProvider.t) =
       )
       args
 
-  | TypeUnit | TypeArrow (_, _) | TypeTuple _ -> Ok (KindSubst.null, KindType)
-  | _ -> Error Unimplemented
+  | TypeUnit | TypeArrow _ | TypeTuple _ | TypeRecord _ -> Ok (KindSubst.null, KindType)
+  | TypeRowEmpty | TypeRowExtend _ -> Ok (KindSubst.null, KindRow)
 
 let infer_kind (env: KindEnv.t) (t: Type.t) =
   let new_kvar = KVarProvider.create () in

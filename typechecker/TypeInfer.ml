@@ -28,6 +28,9 @@ type err =
   | TypeMismatch of Type.t * Type.t
   | KindError of KindInfer.err
   | NotFullyApplied of Type.t
+  | CannotInsertLabel of string
+  | UnexpectedType of Type.t
+  | RecursiveRowType
   | Unimplemented of string
 
 let err_to_string e =
@@ -41,6 +44,9 @@ let err_to_string e =
         (Type.to_string b)
   | KindError e -> KindInfer.err_to_string e
   | NotFullyApplied t -> Printf.sprintf "Type '%s' has not been fully applied" (Type.to_string t)
+  | CannotInsertLabel l -> Printf.sprintf "Label '%s' cannot be inserted" l
+  | UnexpectedType t -> Printf.sprintf "Unexpected type '%s'" (Type.to_string t)
+  | RecursiveRowType -> "Recursive row type"
   | Unimplemented s -> Printf.sprintf "Unimplemented: %s" s
 
 let locate (p: 'a) : 'a located = { item = p; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
@@ -120,10 +126,10 @@ end)
 
 (** Given two types, determine if they can unify and return any possible
     type variable substitutions *)
-let rec unify (t1: Type.t) (t2: Type.t) =
+let rec unify (new_tvar: TVarProvider.t) (t1: Type.t) (t2: Type.t) =
   match (t1.item, t2.item) with
   | TypeArrow (arg1, ret1), TypeArrow (arg2, ret2) ->
-      unify_lists [arg1; ret1] [arg2; ret2]
+      unify_lists new_tvar [arg1; ret1] [arg2; ret2]
 
   | _, TypeVar n -> var_bind n t1
   | TypeVar n, _ -> var_bind n t2
@@ -132,29 +138,70 @@ let rec unify (t1: Type.t) (t2: Type.t) =
       Ok TypeSubst.null
 
   | TypeConstructor (x, x_args), TypeConstructor (y, y_args) ->
-      unify_lists (x :: x_args) (y :: y_args)
+      unify_lists new_tvar (x :: x_args) (y :: y_args)
 
-  | TypeTuple xs, TypeTuple ys -> unify_lists xs ys
+  | TypeTuple xs, TypeTuple ys -> unify_lists new_tvar xs ys
+
+  | TypeRecord r1, TypeRecord r2 -> unify new_tvar r1 r2
+  | TypeRowEmpty, TypeRowEmpty -> Ok TypeSubst.null
+
+  | TypeRowExtend (l1, f1, r1), (TypeRowExtend (_, _, _)) -> (
+      let%bind (f2, r2, subs1) = rewrite_row new_tvar t2 l1 in
+      match r2.item with
+      | TypeRowExtend (_, _, { item = TypeVar tv; _ }) when TypeSubst.mem subs1 tv ->
+          Error RecursiveRowType
+      | _ ->
+          let%bind subs2 = unify new_tvar (TypeSubst.type_apply subs1 f1) (TypeSubst.type_apply subs1 f2) in
+          let subs3 = TypeSubst.compose subs2 subs1 in
+          let%bind subs4 = unify new_tvar (TypeSubst.type_apply subs3 r1) (TypeSubst.type_apply subs3 r2) in
+          Ok (TypeSubst.compose subs4 subs3)
+
+  )
 
   | _ -> Error (TypeMismatch (t1, t2))
 
 (** Given two lists of types, attempt to unify each element pairwise and
     aggregate the substitution mapping *)
-and unify_lists xs ys =
+and unify_lists (new_tvar: TVarProvider.t) xs ys =
   let folder acc x y =
     let%bind s1 = acc in
-    let%map s2 = unify (TypeSubst.type_apply s1 x) (TypeSubst.type_apply s1 y) in
+    let%map s2 = unify new_tvar (TypeSubst.type_apply s1 x) (TypeSubst.type_apply s1 y) in
     TypeSubst.compose s2 s1
   in
   match List.fold2 ~f:folder ~init:(Ok TypeSubst.null) xs ys with
   | Ok x -> x
   | _ -> Error UnequalLengths
 
+and rewrite_row (new_tvar: TVarProvider.t) (row: Type.t) (new_label: string) : (Type.t * Type.t * TypeSubst.t, err) Result.t =
+  match row.item with
+  | TypeRowExtend (label, f_type, r_tail) when String.equal label new_label ->
+      Ok (f_type, r_tail, TypeSubst.null)
+  | TypeRowExtend (label, f_type, r_tail) -> (
+      match r_tail.item with
+      | TypeVar alpha -> (
+          let beta = new_tvar () in
+          let gamma = new_tvar () in
+          Ok (
+            gamma,
+            TypeRowExtend (label, f_type, beta) |> locate,
+            TypeSubst.singleton alpha (TypeRowExtend (new_label, gamma, beta) |> locate)
+          )
+        )
+      | _ -> (
+        let%bind (f_type_, r_tail_, subs) = rewrite_row new_tvar r_tail new_label in
+        Ok (f_type_, TypeRowExtend (label, f_type, r_tail_) |> locate, subs)
+      )
+  )
+  | TypeRowEmpty -> Error (CannotInsertLabel new_label)
+  | _ -> Error (UnexpectedType row)
+
 let%test_module "unify" = (module struct
+  let new_tvar = TVarProvider.create ()
+
   let%expect_test "Can unify ident with var" =
     let t1 = locate (TypeIdent "Test") in
     let t2 = locate (TypeVar "x") in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.ok
     |> Option.bind ~f:(fun subs -> Map.find subs "x")
     |> Option.map ~f:Type.to_string
@@ -164,7 +211,7 @@ let%test_module "unify" = (module struct
   let%expect_test "Can unify two arrows that are the same" =
     let t1 = locate (TypeArrow (locate (TypeIdent "Int"), locate (TypeIdent "String"))) in
     let t2 = locate (TypeArrow (locate (TypeIdent "Int"), locate (TypeIdent "String"))) in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.map ~f:Map.length
     |> Result.iter ~f:(Stdio.printf "%d");
     [%expect {| 0 |}]
@@ -173,14 +220,14 @@ let%test_module "unify" = (module struct
   (* a -> String -> Bool, Int -> b -> Bool *)
     let t1 = locate (TypeArrow (locate (TypeVar "a"), locate (TypeArrow (locate (TypeIdent "String"), locate (TypeIdent "Bool"))))) in
     let t2 = locate (TypeArrow (locate (TypeIdent "Int"), locate (TypeArrow (locate (TypeVar "b"), locate (TypeIdent "Bool"))))) in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = String |}]
 
   let%expect_test "Does not unify two arrows that are different" =
     let t1 = locate (TypeArrow (locate (TypeIdent "Int"), locate (TypeIdent "String"))) in
     let t2 = locate (TypeArrow (locate (TypeIdent "Bool"), locate (TypeIdent "String"))) in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.map_error ~f:err_to_string
     |> Result.iter_error ~f:Stdio.print_endline;
     [%expect {| Cannot unify 'Int' with 'Bool' |}]
@@ -188,7 +235,7 @@ let%test_module "unify" = (module struct
   let%expect_test "Can unify a generic and specialised arrow" =
     let t1 = locate (TypeArrow (locate (TypeVar "x"), locate (TypeIdent "String"))) in
     let t2 = locate (TypeArrow (locate (TypeIdent "Test"), locate (TypeIdent "String"))) in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.ok
     |> Option.bind ~f:(fun subs -> Map.find subs "x")
     |> Option.map ~f:Type.to_string
@@ -201,7 +248,7 @@ let%test_module "unify" = (module struct
     let const = locate (TypeIdent "Test") in
     let t1 = locate (TypeConstructor (const, args1)) in
     let t2 = locate (TypeConstructor (const, args2)) in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = Bool, c = String |}]
 
@@ -210,12 +257,12 @@ let%test_module "unify" = (module struct
     let ys = [locate (TypeIdent "Int"); locate (TypeVar "b"); locate (TypeIdent "String")] in
     let t1 = locate (TypeTuple xs) in
     let t2 = locate (TypeTuple ys) in
-    unify t1 t2
+    unify new_tvar t1 t2
     |> Result.iter ~f:(fun s -> TypeSubst.to_string s |> Stdio.print_endline);
     [%expect {| a = Int, b = Bool, c = String |}]
 end)
 
-let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
+let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
   match expr.item with
   | ExprUnit ->
       Ok (TypeSubst.null, locate TypeUnit)
@@ -227,42 +274,61 @@ let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSu
       | ConstString _ -> locate (TypeIdent "String")
      )
   | ExprIdent id -> (
-      match (TypeEnv.lookup env.type_env id) with
+      match (TypeEnv.lookup env id) with
       | Some t -> Ok (TypeSubst.null, instantiate t new_tvar)
       | None -> Error (VariableNotFound { id; location = expr.location })
   )
   | ExprFn (param_id, body_expr) -> (
       let tvar = new_tvar () in
-      let fn_env = { env with type_env = TypeEnv.extend env.type_env param_id (Forall ([], tvar)) } in
+      let fn_env = TypeEnv.extend env param_id (Forall ([], tvar)) in
       let%bind (subs, return_type) = infer fn_env body_expr new_tvar in
-      Ok (subs, TypeArrow (TypeSubst.type_apply subs tvar, return_type) |> locate)
+      Ok (subs, TypeArrow (tvar, return_type) |> locate |> TypeSubst.type_apply subs)
+  )
+  | ExprApply (fn_expr, arg_expr) -> (
+    let tvar = new_tvar () in
+    let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
+    let%bind (arg_subs, arg_type) = infer (TypeSubst.env_apply fn_subs env) arg_expr new_tvar in
+    let%bind rt_subs = unify new_tvar (TypeSubst.type_apply arg_subs fn_type) (TypeArrow (arg_type, tvar) |> locate) in
+    Ok (TypeSubst.compose rt_subs (TypeSubst.compose arg_subs fn_subs), TypeSubst.type_apply rt_subs tvar)
+  )
+  | ExprInfix (lhs, op, rhs) -> (
+    let rt_t = new_tvar () in
+    let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
+    let%bind (rhs_subs, rhs_t) = infer (TypeSubst.env_apply lhs_subs env) rhs new_tvar in
+    let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
+    let%bind rt_subs = unify new_tvar (TypeSubst.type_apply rhs_subs (TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate)) op_t in
+    Ok (TypeSubst.compose rt_subs rhs_subs, TypeSubst.type_apply rt_subs rt_t)
   )
   | ExprValBinding (pattern, value_expr, body_expr) -> (
     match pattern.item with
     | PatternVar var_name -> (
       let%bind (value_subs, value_type) = infer env value_expr new_tvar in
-      let bound_env = TypeSubst.env_apply value_subs env.type_env in
+      let bound_env = TypeSubst.env_apply value_subs env in
       let value_type_gen = generalise bound_env value_type in
-      let%bind (body_subs, body_type) = infer { env with type_env = (TypeEnv.extend bound_env var_name value_type_gen) } body_expr new_tvar in
+      let%bind (body_subs, body_type) = infer (TypeEnv.extend bound_env var_name value_type_gen) body_expr new_tvar in
       Ok (TypeSubst.compose value_subs body_subs, body_type)
     )
     | _ -> Error (Unimplemented "infer val binding for pattern")
   )
-  | ExprApply (fn_expr, arg_expr) -> (
-    let tvar = new_tvar () in
-    let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
-    let%bind (body_subs, body_type) = infer {env with type_env = (TypeSubst.env_apply fn_subs env.type_env) } arg_expr new_tvar in
-    let%bind rt_subs = unify (TypeSubst.type_apply body_subs fn_type) (TypeArrow (body_type, tvar) |> locate) in
-    Ok (TypeSubst.compose rt_subs (TypeSubst.compose body_subs fn_subs), TypeSubst.type_apply rt_subs tvar)
-  )
-  | ExprInfix (lhs, op, rhs) -> (
-    let rt_t = new_tvar () in
-    let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
-    let%bind (rhs_subs, rhs_t) = infer env rhs new_tvar in
-    let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
-    let%bind rt_subs = unify (TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate) op_t in
-    Ok (TypeSubst.compose lhs_subs (TypeSubst.compose rhs_subs rt_subs), TypeSubst.type_apply rt_subs rt_t)
-  )
+  | ExprRecordEmpty -> Ok (TypeSubst.null, TypeRecord (locate TypeRowEmpty) |> locate)
+  | ExprRecordExtend (label, expr, rest_expr) ->
+      let field_t = new_tvar () in
+      let rest_t = new_tvar () in
+      let param1_t = field_t in
+      let param2_t = TypeRecord rest_t |> locate in
+      let return_type = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
+      let%bind (expr_subs, expr_t) = infer env expr new_tvar in
+      let%bind (rest_subs, rest_t) = infer (TypeSubst.env_apply expr_subs env) rest_expr new_tvar in
+      let%bind param1_subs = unify new_tvar param1_t (TypeSubst.type_apply expr_subs expr_t) in
+      let%bind param2_subs = unify new_tvar param2_t (TypeSubst.type_apply rest_subs rest_t) in
+      Ok (TypeSubst.compose param2_subs param1_subs, return_type)
+  | ExprRecordAccess (expr, label) ->
+      let field_t = new_tvar () in
+      let rest_t = new_tvar () in
+      let param_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
+      let%bind (expr_subs, expr_t) = infer env expr new_tvar in
+      let%bind return_subs = unify new_tvar param_t (TypeSubst.type_apply expr_subs expr_t) in
+      Ok (return_subs, TypeSubst.type_apply return_subs field_t)
   | _ -> Error (Unimplemented "infer")
 
 (** We only want scalar kinds once we're done with type checking *)
@@ -276,13 +342,13 @@ let check_kind (env: KindEnv.t) (t: Type.t) : (unit, err) Result.t =
   else Error (NotFullyApplied t)
 
 let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
-  let%bind (subs, t) = infer env expr (TVarProvider.create ()) in
-  let%bind _ = check_kind env.kind_env t in
+  let%bind (subs, t) = infer env.type_env expr (TVarProvider.create ()) in
+  (* let%bind _ = check_kind env.kind_env t in *)
   Ok (TypeSubst.type_apply subs t)
 
 let%test_module "infer_type" = (module struct
   let%expect_test "first try" =
-    let const = ExprConstant (ConstNumber 3.) |> locate in
+    let const = ExprConstant (ConstNumber 1.) |> locate in
     let fn = ExprFn ("a", locate ExprUnit) |> locate in
     let app = ExprApply (fn, const) |> locate in
     infer_type { kind_env = KindEnv.empty; type_env = TypeEnv.empty } app

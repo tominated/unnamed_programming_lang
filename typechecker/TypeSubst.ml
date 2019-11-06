@@ -7,6 +7,8 @@ let null : t = Map.empty (module String)
 
 let singleton s t : t = Map.singleton (module String) s t
 
+let mem s k : bool = Map.mem s k
+
 let to_string (s: t) : string =
   Map.to_alist s
   |> List.map ~f:(fun (v, t) -> Printf.sprintf "%s = %s" v (Type.to_string t))
@@ -24,6 +26,12 @@ let rec type_apply (subst: t) (t: Type.t) : Type.t =
     }
   | TypeConstructor (n, ts) -> { t with
       item = TypeConstructor (n, List.map ~f:(type_apply subst) ts);
+    }
+  | TypeRecord row -> { t with
+      item = TypeRecord (type_apply subst row);
+    }
+  | TypeRowExtend (l, t, r) -> { t with
+      item = TypeRowExtend (l, type_apply subst t, type_apply subst r);
     }
   | _ -> t
 

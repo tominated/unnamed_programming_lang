@@ -6,6 +6,7 @@ open Typechecker
 let kind_env = KindEnv.of_alist_exn [
   ("Number", KindType);
   ("Boolean", KindType);
+  ("String", KindType);
   ("List", KindArrow(KindType, KindType));
   ("Result", KindArrow(KindType, KindArrow(KindType, KindType)));
 ]
@@ -13,6 +14,7 @@ let kind_env = KindEnv.of_alist_exn [
 let type_env =
   let vars = [
     ("id", "forall a. a -> a");
+    ("add", "forall . Number -> Number -> Number");
     ("+", "forall . Number -> Number -> Number");
     ("-", "forall . Number -> Number -> Number");
     ("==", "forall . Number -> Number -> Boolean");
@@ -36,7 +38,7 @@ let parse lexbuf =
     | Ok t ->
       let expr_str = Syntax.expression_to_string e in
       let type_str = Syntax.type_signature_to_string t in
-      Stdio.printf "%s\n%s\n" expr_str type_str
+      Stdio.printf "    %s\n    %s\n" expr_str type_str
     | Error err -> Stdio.print_endline (TypeInfer.err_to_string err)
     )
 

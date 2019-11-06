@@ -1,7 +1,8 @@
 %{
   open Ast.Syntax
 
-  let located item location = { item = item; location = location }
+  let located item location = { item; location = location }
+  let dummy item = { item; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
 
   let fn_expr (args: string list) (body: expression) =
     Base.List.fold_right
@@ -16,6 +17,21 @@
       ~f:(fun acc arg -> located (ExprApply(acc, arg)) fn.location)
       args
     |> fun x -> x.item
+
+  let record_type (fields: (string * type_signature) list) (ext: type_signature option) =
+    let row = Base.List.fold_right
+      ~init:(Base.Option.value ~default:(dummy TypeRowEmpty) ext)
+      ~f:(fun (label, t) acc -> TypeRowExtend (label, t, acc) |> dummy)
+      fields
+    in TypeRecord row
+
+  let record_expr (fields: (string * expression) list) (ext: expression option) =
+    Base.List.fold_right
+      ~init:(Base.Option.value ~default:(dummy ExprRecordEmpty) ext)
+      ~f:(fun (label, e) acc -> ExprRecordExtend (label, e, acc) |> dummy)
+      fields
+    |> fun x -> x.item
+
 %}
 
 %token <string> LIDENT (* lowecase identifier *)
@@ -118,7 +134,7 @@ atomic_expr:
   | "(" elems=separated_nontrivial_llist(",", l(expr)) ")" { ExprTuple elems }
   | "(" e=expr ")" { e }
   | "[" elems=separated_list(",", l(expr)) "]" { ExprArray elems }
-  | "{" fields=separated_list(",", field_expr) base=record_expr_base? "}" {ExprRecord (fields, base) }
+  | "{" fields=separated_list(",", field_expr) base=record_expr_base? "}" { record_expr fields base }
 
 (* Function application and atomic expressions *)
 application_expr:
@@ -159,7 +175,7 @@ type_signature:
 atomic_type:
   | "(" ts=separated_nontrivial_llist(",", l(atomic_type)) ")" { TypeTuple ts }
   | "{" fs=record_field_type_signature+ ext=record_extend_type_signature? "}"
-      { TypeRecord (fs, ext) }
+      { record_type fs ext }
   | "(" t=type_signature ")" { t }
   | LIDENT { TypeVar $1 }
   | UIDENT { TypeIdent $1 }
@@ -168,7 +184,7 @@ record_field_type_signature:
   | id=LIDENT ":" t=l(type_signature) { (id, t) }
 
 record_extend_type_signature:
-  | "|" id=LIDENT { id }
+  | "|" t=l(atomic_type) { t }
 
 (* Scheme *)
 

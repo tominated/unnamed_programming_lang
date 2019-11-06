@@ -28,8 +28,12 @@ and type_signature_ =
   (* T1 -> T2 *)
   | TypeTuple of type_signature list
   (* (T1, T2) *)
-  | TypeRecord of (string * type_signature) list * string option
-  (* { a: T1, b: T2 | r } *)
+  | TypeRecord of type_signature
+  (* { ... } *)
+  | TypeRowEmpty
+  (* {} *)
+  | TypeRowExtend of string * type_signature * type_signature
+  (* { a: T1 | T2 } *)
 
 (* A forall binding *)
 and scheme = Forall of string list * type_signature
@@ -88,8 +92,10 @@ and expression_ =
   (* Constructor E0 E1 *)
   | ExprArray of expression list
   (* [E0, E1, E3] *)
-  | ExprRecord of (string * expression) list * expression option
-  (* { a: E0, b: E1 } or { ...E, a: E0, b: E1 } *)
+  | ExprRecordEmpty
+  (* {} *)
+  | ExprRecordExtend of string * expression * expression
+  (* { a: E0 | E1 } *)
   | ExprRecordAccess of expression * string
   (* E0.l *)
   | ExprConstraint of expression * type_signature
@@ -109,11 +115,11 @@ let rec type_signature_to_string ts =
   | TypeTuple xs ->
       let vals = String.concat ~sep:", " (List.map ~f:type_signature_to_string xs) in
       Printf.sprintf "(%s)" vals
-  | TypeRecord (fs, ext) ->
-    let fs_ = List.map ~f:(fun (name, t) -> Printf.sprintf "%s : %s" name (type_signature_to_string t)) fs in
-    let fields = String.concat ~sep:", " fs_ in
-    let ext_ = Option.value_map ~default:"" ~f:(Printf.sprintf " | %s") ext in
-    Printf.sprintf "{ %s%s }" fields ext_
+  | TypeRecord row -> type_signature_to_string row
+  | TypeRowEmpty -> "{}"
+  | TypeRowExtend (label, field, ext) ->
+      Printf.sprintf "{ %s: %s | %s }"
+        label (type_signature_to_string field) (type_signature_to_string ext)
 
 let constant_to_string c =
   match c with
@@ -216,11 +222,9 @@ let rec expression_to_string e =
       Printf.sprintf "%s %s" n exprs
   | ExprArray es ->
       es |> List.map ~f:expression_to_string |> String.concat ~sep:", " |> Printf.sprintf "[%s]"
-  | ExprRecord (fs, b) ->
-      let field_to_string (n, e) = Printf.sprintf "%s : %s" n (expression_to_string e) in
-      let fields = fs |> List.map ~f:field_to_string |> String.concat ~sep:", " in
-      let base = b |> Option.value_map ~default:"" ~f:(fun e -> Printf.sprintf " | %s" (expression_to_string e)) in
-      Printf.sprintf "{ %s%s }" fields base
+  | ExprRecordEmpty -> "{}"
+  | ExprRecordExtend (n, e, r) ->
+      Printf.sprintf "{ %s: %s | %s }" n (expression_to_string e) (expression_to_string r)
   | ExprRecordAccess (e1, n) -> Printf.sprintf "%s.%s" (expression_to_string e1) n
   | ExprConstraint (e, t) -> Printf.sprintf "%s : %s" (expression_to_string e) (type_signature_to_string t)
   | ExprSequence (e1, e2) -> Printf.sprintf "%s; %s" (expression_to_string e1) (expression_to_string e2)

@@ -12,6 +12,10 @@ let rec free_type_vars (t: t) : Set.M(String).t =
       ts
       |> List.map ~f:free_type_vars
       |> Set.union_list (module String)
+  | TypeRecord t -> free_type_vars t
+  | TypeRowEmpty -> Set.empty (module String)
+  | TypeRowExtend (_, t, r) ->
+      Set.union (free_type_vars r) (free_type_vars t)
   | _ -> Set.empty (module String)
 
 let to_string = type_signature_to_string
