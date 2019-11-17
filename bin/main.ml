@@ -24,14 +24,15 @@ let type_env =
     ("false", "forall . Boolean");
     ("not", "forall . Boolean -> Boolean");
     ("some", "forall a. a -> Option a");
-    ("bind", "forall a b. Option a -> (a -> Option b) -> Option b");
-    (">>=", "forall a b. Option a -> (a -> Option b) -> Option b");
+    ("none", "forall . Option a");
+    ("bind", "forall a b. (Option a) -> (a -> Option b) -> Option b");
+    (">>=", "forall a b. (Option a) -> (a -> Option b) -> Option b");
   ] in
   let parse_and_add env (id, body) =
     let buf = Sedlexing.Utf8.from_string body in
     match Parser.parse_scheme buf with
     | Ok scheme -> TypeEnv.extend env id scheme
-    | Error e -> failwith e
+    | Error e -> failwith (Printf.sprintf "%s: %s" id e)
   in
   List.fold ~init:TypeEnv.empty ~f:parse_and_add vars
 

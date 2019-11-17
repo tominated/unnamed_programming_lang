@@ -111,7 +111,7 @@ let rec type_signature_to_string ts =
   | TypeConstructor (x, xs) ->
       let args = List.map ~f:type_signature_to_string xs in
       Printf.sprintf "%s %s" (type_signature_to_string x) (String.concat ~sep:" " args)
-  | TypeArrow (a,b) -> Printf.sprintf "%s -> %s" (type_signature_to_string a) (type_signature_to_string b)
+  | TypeArrow (a,b) -> Printf.sprintf "(%s -> %s)" (type_signature_to_string a) (type_signature_to_string b)
   | TypeTuple xs ->
       let vals = String.concat ~sep:", " (List.map ~f:type_signature_to_string xs) in
       Printf.sprintf "(%s)" vals
@@ -120,6 +120,11 @@ let rec type_signature_to_string ts =
   | TypeRowExtend (label, field, ext) ->
       Printf.sprintf "{ %s: %s | %s }"
         label (type_signature_to_string field) (type_signature_to_string ext)
+
+let scheme_to_string s =
+  match s with
+  | Forall (vars, t) ->
+    Printf.sprintf "forall %s . %s" (String.concat ~sep:" " vars) (type_signature_to_string t)
 
 let constant_to_string c =
   match c with

@@ -304,10 +304,10 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
     match pattern.item with
     | PatternVar var_name -> (
       let%bind (value_subs, value_type) = infer env value_expr new_tvar in
-      let bound_env = TypeSubst.env_apply value_subs env in
-      let value_type_gen = generalise bound_env value_type in
-      let%bind (body_subs, body_type) = infer (TypeEnv.extend bound_env var_name value_type_gen) body_expr new_tvar in
-      Ok (TypeSubst.compose value_subs body_subs, body_type)
+      let env_ = TypeSubst.env_apply value_subs env in
+      let scheme = generalise env_ value_type in
+      let%bind (body_subs, body_type) = infer (TypeEnv.extend env_ var_name scheme) body_expr new_tvar in
+      Ok (TypeSubst.compose body_subs value_subs, body_type)
     )
     | _ -> Error (Unimplemented "infer val binding for pattern")
   )
@@ -321,14 +321,15 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
       let%bind (rest_subs, rest_t) = infer (TypeSubst.env_apply expr_subs env) rest_expr new_tvar in
       let%bind field_subs = unify new_tvar field_t (TypeSubst.type_apply expr_subs expr_t) in
       let%bind record_rest_subs = unify new_tvar record_rest_t (TypeSubst.type_apply rest_subs rest_t) in
-      Ok (TypeSubst.compose record_rest_subs field_subs, record_t)
+      let subst = TypeSubst.compose record_rest_subs field_subs in
+      Ok (TypeSubst.null, TypeSubst.type_apply subst record_t)
   | ExprRecordAccess (expr, label) ->
       let field_t = new_tvar () in
       let rest_t = new_tvar () in
       let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
       let%bind (expr_subs, expr_t) = infer env expr new_tvar in
       let%bind return_subs = unify new_tvar record_t (TypeSubst.type_apply expr_subs expr_t) in
-      Ok (return_subs, TypeSubst.type_apply return_subs field_t)
+      Ok (TypeSubst.null, TypeSubst.type_apply return_subs field_t)
   | _ -> Error (Unimplemented "infer")
 
 (** We only want scalar kinds once we're done with type checking *)
