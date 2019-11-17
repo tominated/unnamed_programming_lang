@@ -296,7 +296,8 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
     let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
     let%bind (rhs_subs, rhs_t) = infer (TypeSubst.env_apply lhs_subs env) rhs new_tvar in
     let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
-    let%bind rt_subs = unify new_tvar (TypeSubst.type_apply rhs_subs (TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate)) op_t in
+    let fn_t = TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate in
+    let%bind rt_subs = unify new_tvar (TypeSubst.type_apply rhs_subs fn_t) op_t in
     Ok (TypeSubst.compose rt_subs rhs_subs, TypeSubst.type_apply rt_subs rt_t)
   )
   | ExprValBinding (pattern, value_expr, body_expr) -> (
@@ -314,20 +315,19 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
   | ExprRecordExtend (label, expr, rest_expr) ->
       let field_t = new_tvar () in
       let rest_t = new_tvar () in
-      let param1_t = field_t in
-      let param2_t = TypeRecord rest_t |> locate in
-      let return_type = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
+      let record_rest_t = TypeRecord rest_t |> locate in
+      let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
       let%bind (expr_subs, expr_t) = infer env expr new_tvar in
       let%bind (rest_subs, rest_t) = infer (TypeSubst.env_apply expr_subs env) rest_expr new_tvar in
-      let%bind param1_subs = unify new_tvar param1_t (TypeSubst.type_apply expr_subs expr_t) in
-      let%bind param2_subs = unify new_tvar param2_t (TypeSubst.type_apply rest_subs rest_t) in
-      Ok (TypeSubst.compose param2_subs param1_subs, return_type)
+      let%bind field_subs = unify new_tvar field_t (TypeSubst.type_apply expr_subs expr_t) in
+      let%bind record_rest_subs = unify new_tvar record_rest_t (TypeSubst.type_apply rest_subs rest_t) in
+      Ok (TypeSubst.compose record_rest_subs field_subs, record_t)
   | ExprRecordAccess (expr, label) ->
       let field_t = new_tvar () in
       let rest_t = new_tvar () in
-      let param_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
+      let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
       let%bind (expr_subs, expr_t) = infer env expr new_tvar in
-      let%bind return_subs = unify new_tvar param_t (TypeSubst.type_apply expr_subs expr_t) in
+      let%bind return_subs = unify new_tvar record_t (TypeSubst.type_apply expr_subs expr_t) in
       Ok (return_subs, TypeSubst.type_apply return_subs field_t)
   | _ -> Error (Unimplemented "infer")
 
@@ -343,7 +343,7 @@ let check_kind (env: KindEnv.t) (t: Type.t) : (unit, err) Result.t =
 
 let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
   let%bind (subs, t) = infer env.type_env expr (TVarProvider.create ()) in
-  (* let%bind _ = check_kind env.kind_env t in *)
+  let%bind _ = check_kind env.kind_env t in
   Ok (TypeSubst.type_apply subs t)
 
 let%test_module "infer_type" = (module struct
