@@ -170,7 +170,7 @@ parse_type_signature:
 type_signature:
   | t=atomic_type { t }
   | lhs=l(atomic_type) "->" rhs=l(type_signature) { TypeArrow (lhs, rhs) }
-  | t=l(atomic_type) ts=nonempty_list(l(type_signature)) { TypeConstructor (t, ts) }
+  | t=l(atomic_type) ts=nonempty_list(l(atomic_type)) { TypeConstructor (t, ts) }
 
 atomic_type:
   | "(" ts=separated_nontrivial_llist(",", l(atomic_type)) ")" { TypeTuple ts }

@@ -98,7 +98,7 @@ and expression_ =
   (* { a: E0 | E1 } *)
   | ExprRecordAccess of expression * string
   (* E0.l *)
-  | ExprConstraint of expression * type_signature
+  | ExprAnnotated of expression * type_signature
   (* E: T *)
   | ExprSequence of expression * expression
   (* E1; E2 *)
@@ -231,5 +231,5 @@ let rec expression_to_string e =
   | ExprRecordExtend (n, e, r) ->
       Printf.sprintf "{ %s: %s | %s }" n (expression_to_string e) (expression_to_string r)
   | ExprRecordAccess (e1, n) -> Printf.sprintf "%s.%s" (expression_to_string e1) n
-  | ExprConstraint (e, t) -> Printf.sprintf "%s : %s" (expression_to_string e) (type_signature_to_string t)
+  | ExprAnnotated (e, t) -> Printf.sprintf "%s : %s" (expression_to_string e) (type_signature_to_string t)
   | ExprSequence (e1, e2) -> Printf.sprintf "%s; %s" (expression_to_string e1) (expression_to_string e2)

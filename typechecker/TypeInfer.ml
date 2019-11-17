@@ -262,10 +262,16 @@ let%test_module "unify" = (module struct
     [%expect {| a = Int, b = Bool, c = String |}]
 end)
 
-let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
+let infer_kind (env: KindEnv.t) (t: Type.t) : (Kind.t, err) Result.t =
+  KindInfer.infer_kind env t
+  |> Result.map_error ~f:(fun e -> KindError e)
+
+let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSubst.t * Type.t), err) Result.t =
+  let { type_env; kind_env } = env in
+
   match expr.item with
-  | ExprUnit ->
-      Ok (TypeSubst.null, locate TypeUnit)
+  | ExprUnit -> Ok (TypeSubst.null, locate TypeUnit)
+
   | ExprConstant const ->
     Ok (
       TypeSubst.null,
@@ -273,56 +279,81 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
       | ConstNumber _ -> locate (TypeIdent "Number")
       | ConstString _ -> locate (TypeIdent "String")
      )
-  | ExprIdent id -> (
-      match (TypeEnv.lookup env id) with
+
+  | ExprIdent id ->
+      begin match (TypeEnv.lookup type_env id) with
       | Some t -> Ok (TypeSubst.null, instantiate t new_tvar)
       | None -> Error (VariableNotFound { id; location = expr.location })
-  )
-  | ExprFn (param_id, body_expr) -> (
+      end
+
+  | ExprFn (param_id, body_expr) ->
       let tvar = new_tvar () in
-      let fn_env = TypeEnv.extend env param_id (Forall ([], tvar)) in
-      let%bind (subs, return_type) = infer fn_env body_expr new_tvar in
+      let fn_env = TypeEnv.extend type_env param_id (Forall ([], tvar)) in
+      let%bind (subs, return_type) = infer { env with type_env = fn_env } body_expr new_tvar in
       Ok (subs, TypeArrow (tvar, return_type) |> locate |> TypeSubst.type_apply subs)
-  )
-  | ExprApply (fn_expr, arg_expr) -> (
-    let tvar = new_tvar () in
-    let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
-    let%bind (arg_subs, arg_type) = infer (TypeSubst.env_apply fn_subs env) arg_expr new_tvar in
-    let%bind rt_subs = unify new_tvar (TypeSubst.type_apply arg_subs fn_type) (TypeArrow (arg_type, tvar) |> locate) in
-    Ok (TypeSubst.compose rt_subs (TypeSubst.compose arg_subs fn_subs), TypeSubst.type_apply rt_subs tvar)
-  )
-  | ExprInfix (lhs, op, rhs) -> (
-    let rt_t = new_tvar () in
-    let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
-    let%bind (rhs_subs, rhs_t) = infer (TypeSubst.env_apply lhs_subs env) rhs new_tvar in
-    let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
-    let fn_t = TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate in
-    let%bind rt_subs = unify new_tvar (TypeSubst.type_apply rhs_subs fn_t) op_t in
-    Ok (TypeSubst.compose rt_subs rhs_subs, TypeSubst.type_apply rt_subs rt_t)
-  )
-  | ExprValBinding (pattern, value_expr, body_expr) -> (
-    match pattern.item with
-    | PatternVar var_name -> (
-      let%bind (value_subs, value_type) = infer env value_expr new_tvar in
-      let env_ = TypeSubst.env_apply value_subs env in
-      let scheme = generalise env_ value_type in
-      let%bind (body_subs, body_type) = infer (TypeEnv.extend env_ var_name scheme) body_expr new_tvar in
-      Ok (TypeSubst.compose body_subs value_subs, body_type)
-    )
-    | _ -> Error (Unimplemented "infer val binding for pattern")
-  )
+
+  | ExprApply (fn_expr, arg_expr) ->
+      let tvar = new_tvar () in
+      let%bind (fn_subs, fn_type) = infer env fn_expr new_tvar in
+      let%bind (arg_subs, arg_type) = infer { env with type_env = TypeSubst.env_apply fn_subs type_env } arg_expr new_tvar in
+      let%bind rt_subs = unify new_tvar (TypeSubst.type_apply arg_subs fn_type) (TypeArrow (arg_type, tvar) |> locate) in
+      Ok (TypeSubst.compose rt_subs (TypeSubst.compose arg_subs fn_subs), TypeSubst.type_apply rt_subs tvar)
+
+  | ExprInfix (lhs, op, rhs) ->
+      let rt_t = new_tvar () in
+      let%bind (lhs_subs, lhs_t) = infer env lhs new_tvar in
+      let%bind (rhs_subs, rhs_t) = infer { env with type_env = TypeSubst.env_apply lhs_subs type_env } rhs new_tvar in
+      let%bind (_, op_t) = infer env (ExprIdent op |> locate) new_tvar in
+      let fn_t = TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate in
+      let%bind rt_subs = unify new_tvar (TypeSubst.type_apply rhs_subs fn_t) op_t in
+      Ok (TypeSubst.compose rt_subs rhs_subs, TypeSubst.type_apply rt_subs rt_t)
+
+  | ExprValBinding (pattern, value_expr, body_expr) ->
+      begin match pattern.item with
+      | PatternVar var_name ->
+        let%bind (value_subs, value_type) = infer env value_expr new_tvar in
+        let env_ = TypeSubst.env_apply value_subs type_env in
+        let scheme = generalise env_ value_type in
+        let%bind (body_subs, body_type) = infer { env with type_env = TypeEnv.extend env_ var_name scheme } body_expr new_tvar in
+        Ok (TypeSubst.compose body_subs value_subs, body_type)
+      | _ -> Error (Unimplemented "infer val binding for pattern")
+      end
+
+  | ExprTypeBinding (id, args, binding, body_expr) ->
+      begin match binding with
+      | TypeBindAtomic t ->
+          let%bind t_kind = infer_kind kind_env t in
+          let k = List.fold ~init:t_kind ~f:(fun acc _ -> Kind.KindArrow (Kind.KindType, acc)) args in
+          let kind_env_ = KindEnv.extend kind_env id k in
+          let%bind (body_subs, body_type) = infer { env with kind_env = kind_env_} body_expr new_tvar in
+          Ok (body_subs, body_type)
+      | _ -> Error (Unimplemented "Variants")
+      end
+
+  | ExprTuple xs ->
+      let%bind xs_ =
+        List.map ~f:(fun x ->
+          let%bind (s, t) = infer env x new_tvar in
+          Ok (TypeSubst.type_apply s t)
+        )
+        xs
+        |> Result.all in
+      Ok (TypeSubst.null, { item = TypeTuple xs_ ; location = expr.location })
+
   | ExprRecordEmpty -> Ok (TypeSubst.null, TypeRecord (locate TypeRowEmpty) |> locate)
+
   | ExprRecordExtend (label, expr, rest_expr) ->
       let field_t = new_tvar () in
       let rest_t = new_tvar () in
       let record_rest_t = TypeRecord rest_t |> locate in
       let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
       let%bind (expr_subs, expr_t) = infer env expr new_tvar in
-      let%bind (rest_subs, rest_t) = infer (TypeSubst.env_apply expr_subs env) rest_expr new_tvar in
+      let%bind (rest_subs, rest_t) = infer { env with type_env = TypeSubst.env_apply expr_subs type_env } rest_expr new_tvar in
       let%bind field_subs = unify new_tvar field_t (TypeSubst.type_apply expr_subs expr_t) in
       let%bind record_rest_subs = unify new_tvar record_rest_t (TypeSubst.type_apply rest_subs rest_t) in
       let subst = TypeSubst.compose record_rest_subs field_subs in
       Ok (TypeSubst.null, TypeSubst.type_apply subst record_t)
+
   | ExprRecordAccess (expr, label) ->
       let field_t = new_tvar () in
       let rest_t = new_tvar () in
@@ -330,21 +361,17 @@ let rec infer (env: TypeEnv.t) (expr: expression) (new_tvar: TVarProvider.t): ((
       let%bind (expr_subs, expr_t) = infer env expr new_tvar in
       let%bind return_subs = unify new_tvar record_t (TypeSubst.type_apply expr_subs expr_t) in
       Ok (TypeSubst.null, TypeSubst.type_apply return_subs field_t)
+
+  | ExprAnnotated (expr, t) ->
+      let%bind (expr_subs, expr_t) = infer env expr new_tvar in
+      let%bind return_subs = unify new_tvar t expr_t in
+      let subs = TypeSubst.compose return_subs expr_subs in
+      Ok (TypeSubst.null, TypeSubst.type_apply subs t)
+
   | _ -> Error (Unimplemented "infer")
 
-(** We only want scalar kinds once we're done with type checking *)
-let check_kind (env: KindEnv.t) (t: Type.t) : (unit, err) Result.t =
-  let%bind kind =
-    KindInfer.infer_kind env t
-    |> Result.map_error ~f:(fun e -> KindError e)
-  in
-  if Kind.is_scalar kind
-  then Ok ()
-  else Error (NotFullyApplied t)
-
 let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
-  let%bind (subs, t) = infer env.type_env expr (TVarProvider.create ()) in
-  let%bind _ = check_kind env.kind_env t in
+  let%bind (subs, t) = infer env expr (TVarProvider.create ()) in
   Ok (TypeSubst.type_apply subs t)
 
 let%test_module "infer_type" = (module struct
