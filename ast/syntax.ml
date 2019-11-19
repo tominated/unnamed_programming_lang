@@ -109,7 +109,7 @@ let rec type_signature_to_string ts =
   | TypeVar x -> x
   | TypeIdent x -> x
   | TypeConstructor (x, xs) ->
-      let args = List.map ~f:type_signature_to_string xs in
+      let args = List.map ~f:(fun a -> type_signature_to_string a |> Printf.sprintf "(%s)") xs in
       Printf.sprintf "%s %s" (type_signature_to_string x) (String.concat ~sep:" " args)
   | TypeArrow (a,b) -> Printf.sprintf "(%s -> %s)" (type_signature_to_string a) (type_signature_to_string b)
   | TypeTuple xs ->

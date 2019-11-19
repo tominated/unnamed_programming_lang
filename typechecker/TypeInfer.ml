@@ -145,9 +145,9 @@ let rec unify (new_tvar: TVarProvider.t) (t1: Type.t) (t2: Type.t) =
   | TypeRecord r1, TypeRecord r2 -> unify new_tvar r1 r2
   | TypeRowEmpty, TypeRowEmpty -> Ok TypeSubst.null
 
-  | TypeRowExtend (l1, f1, r1), (TypeRowExtend (_, _, _)) -> (
+  | TypeRowExtend (l1, f1, r1), (TypeRowExtend (_, _, _)) ->
       let%bind (f2, r2, subs1) = rewrite_row new_tvar t2 l1 in
-      match r2.item with
+      begin match r2.item with
       | TypeRowExtend (_, _, { item = TypeVar tv; _ }) when TypeSubst.mem subs1 tv ->
           Error RecursiveRowType
       | _ ->
@@ -155,8 +155,7 @@ let rec unify (new_tvar: TVarProvider.t) (t1: Type.t) (t2: Type.t) =
           let subs3 = TypeSubst.compose subs2 subs1 in
           let%bind subs4 = unify new_tvar (TypeSubst.type_apply subs3 r1) (TypeSubst.type_apply subs3 r2) in
           Ok (TypeSubst.compose subs4 subs3)
-
-  )
+      end
 
   | _ -> Error (TypeMismatch (t1, t2))
 
@@ -176,9 +175,9 @@ and rewrite_row (new_tvar: TVarProvider.t) (row: Type.t) (new_label: string) : (
   match row.item with
   | TypeRowExtend (label, f_type, r_tail) when String.equal label new_label ->
       Ok (f_type, r_tail, TypeSubst.null)
-  | TypeRowExtend (label, f_type, r_tail) -> (
-      match r_tail.item with
-      | TypeVar alpha -> (
+  | TypeRowExtend (label, f_type, r_tail) ->
+      begin match r_tail.item with
+      | TypeVar alpha ->
           let beta = new_tvar () in
           let gamma = new_tvar () in
           Ok (
@@ -186,12 +185,10 @@ and rewrite_row (new_tvar: TVarProvider.t) (row: Type.t) (new_label: string) : (
             TypeRowExtend (label, f_type, beta) |> locate,
             TypeSubst.singleton alpha (TypeRowExtend (new_label, gamma, beta) |> locate)
           )
-        )
-      | _ -> (
+      | _ ->
         let%bind (f_type_, r_tail_, subs) = rewrite_row new_tvar r_tail new_label in
         Ok (f_type_, TypeRowExtend (label, f_type, r_tail_) |> locate, subs)
-      )
-  )
+      end
   | TypeRowEmpty -> Error (CannotInsertLabel new_label)
   | _ -> Error (UnexpectedType row)
 
@@ -273,12 +270,12 @@ let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSu
   | ExprUnit -> Ok (TypeSubst.null, locate TypeUnit)
 
   | ExprConstant const ->
-    Ok (
-      TypeSubst.null,
-      match const with
-      | ConstNumber _ -> locate (TypeIdent "Number")
-      | ConstString _ -> locate (TypeIdent "String")
-     )
+      Ok (
+        TypeSubst.null,
+        match const with
+        | ConstNumber _ -> locate (TypeIdent "Number")
+        | ConstString _ -> locate (TypeIdent "String")
+      )
 
   | ExprIdent id ->
       begin match (TypeEnv.lookup type_env id) with
@@ -323,7 +320,11 @@ let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSu
       begin match binding with
       | TypeBindAtomic t ->
           let%bind t_kind = infer_kind kind_env t in
-          let k = List.fold ~init:t_kind ~f:(fun acc _ -> Kind.KindArrow (Kind.KindType, acc)) args in
+          let k = List.fold
+            ~init:t_kind
+            ~f:(fun acc _ -> Kind.KindArrow (Kind.KindType, acc))
+            args
+          in
           let kind_env_ = KindEnv.extend kind_env id k in
           let%bind (body_subs, body_type) = infer { env with kind_env = kind_env_} body_expr new_tvar in
           Ok (body_subs, body_type)
@@ -368,7 +369,11 @@ let rec infer (env: env) (expr: expression) (new_tvar: TVarProvider.t): ((TypeSu
       let subs = TypeSubst.compose return_subs expr_subs in
       Ok (TypeSubst.null, TypeSubst.type_apply subs t)
 
-  | _ -> Error (Unimplemented "infer")
+  | ExprMatch _ -> Error (Unimplemented "infer match")
+  | ExprIfElse _ -> Error (Unimplemented "infer ifelse")
+  | ExprConstruct _ -> Error (Unimplemented "infer construct")
+  | ExprArray _ -> Error (Unimplemented "infer array")
+  | ExprSequence _ -> Error (Unimplemented "infer sequence")
 
 let infer_type (env: env) (expr: expression): (Type.t, err) Result.t =
   let%bind (subs, t) = infer env expr (TVarProvider.create ()) in
