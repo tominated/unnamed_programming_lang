@@ -1,6 +1,7 @@
 (executable
  (public_name unnamed_programming_lang)
  (name main)
+ (flags -rectypes)
  (libraries parser typechecker base stdio)
  (preprocess
   (pps ppx_inline_test)))

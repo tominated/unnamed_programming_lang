@@ -1,5 +1,6 @@
 (library
   (name ast)
   (inline_tests)
+  (flags -rectypes)
   (preprocess (pps ppx_inline_test ppx_expect))
   (libraries base stdio))
