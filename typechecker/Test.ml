@@ -5,10 +5,45 @@ module Error = struct
   type t =
     | UnboundVariable of string
     | InfiniteType of string * Type.t
+    | UnequalLengths of (Type.t List.t) * (Type.t List.t)
+    | TypeMismatch of Type.t * Type.t
+    | LabelNotFound of string
+    | RecursiveRowType
+    | UnexpectedType of Type.t
     | Unimplemented of string
+  
+  let to_string = function
+  | UnboundVariable id -> Printf.sprintf "Variable '%s' not found" id
+  | InfiniteType _ -> "Infinite Type"
+  | UnequalLengths _ -> "Unequal Lengths"
+  | TypeMismatch (a, b) ->
+      Printf.sprintf "Cannot unify '%s' with '%s'"
+        (Type.to_string a)
+        (Type.to_string b)
+  | LabelNotFound l -> Printf.sprintf "Label '%s' not found" l
+  | RecursiveRowType -> "Recursive row type"
+  | UnexpectedType t -> Printf.sprintf "Unexpected type '%s'" (Type.to_string t)
+  | Unimplemented s -> Printf.sprintf "Unimplemented: %s" s
 end
 
 let locate (p: 'a) : 'a located = { item = p; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
+
+module InferResult = struct
+  module T = struct
+    type 'a t = ('a, Error.t) Result.t
+    let bind x ~f = Result.bind ~f x
+    let return x = Ok x
+    let map = `Custom Result.map
+  end
+
+  type 'a t = 'a T.t
+
+  include Monad.Make(T)
+end
+
+module TypeVarState = struct
+  type t = int
+end
 
 module Infer = struct
   module R = struct
@@ -21,24 +56,7 @@ module Infer = struct
     let append a b = a @ b
   end
 
-  module S = struct
-    type t = int
-  end
-
-  module InferResult = struct
-    module T = struct
-      type 'a t = ('a, Error.t) Result.t
-      let bind x ~f = Result.bind ~f x
-      let return x = Ok x
-      let map = `Custom Result.map
-    end
-
-    type 'a t = 'a T.t
-
-    include Monad.Make(T)
-  end
-
-  module InferRWST = RWST.Make (R) (W) (S) (InferResult)
+  module InferRWST = RWST.Make (R) (W) (TypeVarState) (InferResult)
   include InferRWST
 
   (** [unify t1 t2] Add a type constraint to the monad context *)
@@ -130,47 +148,115 @@ module Infer = struct
     | _ -> except (Unimplemented "infer")
 
   (** [run_infer env expr] Infer a type and list of constraints for an expression *)
-  let run_infer env expr : ((Type.t * W.t), Error.t) Result.t =
-    let open Result.Let_syntax in
-    let%bind (t, _, constraints) = runRWST (infer expr) env 0 in
-    return (t, constraints)
+  let run_infer env expr : ((Type.t * TypeVarState.t * W.t), Error.t) Result.t =
+    runRWST (infer expr) env 0
 end
 
 module Solve = struct
+  module SolveStateT = StateT.Make (TypeVarState) (InferResult)
+  include SolveStateT
+
+  (** [except e] Lift an error in to the monad context *)
+  let except (e: Error.t) = lift (Error e)
+
+  (** [fresh] Generate a new type variable in the monad context *)
+  let fresh =
+    let open Let_syntax in
+    let%bind x = get in
+    let%bind _ = put (x + 1) in
+    return (TypeVar (Printf.sprintf "t%d" x) |> locate)
+
   (** Given a type variable's name, and another type, get the substitutions *)
-  let var_bind name t : (TypeSubst.t, Error.t) Result.t =
+  let var_bind name t : TypeSubst.t t =
     match (name, t.item) with
     (* If name is the same as a TypeVar then we don't know any substitutions *)
     | name, TypeVar m when String.equal name m ->
-        Ok TypeSubst.null
+        return TypeSubst.null
 
     (* If name is found in the free type variables of t, then it fails the occurs check *)
     | name, _ when Set.mem (Type.free_type_vars t) name ->
-        Error (InfiniteType (name, t))
+        except (InfiniteType (name, t))
 
     (* Otherwise substitute name with the type *)
-    | _ -> Ok (TypeSubst.singleton name t)
+    | _ -> return (TypeSubst.singleton name t)
+
+  type rewrite = { field: Type.t; tail: Type.t; subst: TypeSubst.t }
+  let rec rewrite_row (row2: Type.t) (label1: string) : rewrite t =
+    let open Let_syntax in
+    match row2.item with
+    | TypeRowExtend (label, field, tail) when String.equal label1 label ->
+        return { field; tail; subst = TypeSubst.null }
+    | TypeRowExtend (label, field, tail) -> begin
+        match tail.item with
+        | TypeVar alpha ->
+            let%bind beta = fresh in
+            let%bind gamma = fresh in
+            return {
+              field = gamma;
+              tail = TypeRowExtend (label, field, beta) |> locate;
+              subst = TypeSubst.singleton alpha (TypeRowExtend (label1, gamma, beta) |> locate)
+            }
+        | _ ->
+            let%bind {field = field'; tail = tail'; subst} = rewrite_row tail label1 in
+            return {
+              field = field';
+              tail = TypeRowExtend (label, field, tail') |> locate;
+              subst
+            }
+      end
+    | TypeRowEmpty -> except (LabelNotFound label1)
+    | _ -> except (UnexpectedType row2)
 
   (** Attempt to find a substitution that unifies 2 types *)
-  let rec unify (t1: Type.t) (t2: Type.t) : (TypeSubst.t, Error.t) Result.t =
+  let rec unify (t1: Type.t) (t2: Type.t) : TypeSubst.t t =
+    let open Let_syntax in
     match (t1.item, t1.item) with
-    | (TypeVar v, _) -> var_bind v t2
-    | (_, TypeVar v) -> var_bind v t1
-    | _ -> Error (Unimplemented "unifies")
+    | TypeVar v, _ -> var_bind v t2
+    | _, TypeVar v -> var_bind v t1
+
+    | TypeArrow (arg1, rt1), TypeArrow (arg2, rt2) ->
+        unify_many [arg1; rt1] [arg2; rt2]
+
+    | TypeIdent a, TypeIdent b when String.equal a b ->
+        return TypeSubst.null
+
+    | TypeConstructor (a, a_args), TypeConstructor (b, b_args) ->
+        unify_many (a :: a_args) (b :: b_args)
+
+    | TypeRecord r1, TypeRecord r2 -> unify r1 r2
+    | TypeRowEmpty, TypeRowEmpty -> return TypeSubst.null
+
+    | TypeRowExtend (label1, field1, tail1), TypeRowExtend (_, _, _) -> begin
+        let%bind { field = field2; tail = tail2; subst = subst1 } = rewrite_row t2 label1 in
+        match tail2.item with
+        | TypeRowExtend(_, _, { item = TypeVar tv; _ }) when TypeSubst.mem subst1 tv ->
+            except RecursiveRowType
+        | _ ->
+          let%bind subst2 = unify (TypeSubst.type_apply subst1 field1) (TypeSubst.type_apply subst1 field2) in
+          let subst3 = TypeSubst.compose subst2 subst1 in
+          let%bind subst4 = unify (TypeSubst.type_apply subst3 tail1) (TypeSubst.type_apply subst3 tail2) in
+          return (TypeSubst.compose subst4 subst3)
+      end
+
+    | TypeRowEmpty, TypeRowExtend _
+    | TypeRowExtend _, TypeRowEmpty -> except (TypeMismatch (t1, t2))
+
+    | _ -> except (Unimplemented "unifies")
 
   (** Attempt to find a substitution for a list of type pairs *)
-  and unifyMany (ts: (Type.t * Type.t) List.t) : (TypeSubst.t, Error.t) Result.t =
-    let open Result.Let_syntax in
-    match ts with
-    | [] -> return TypeSubst.null
-    | (t1, t2) :: rest ->
-      let%bind subst1 = unify t1 t2 in
-      let%bind subst2 = unifyMany rest in
-      return (TypeSubst.compose subst2 subst1)
+  and unify_many (t1s: Type.t List.t) (t2s: Type.t List.t) : TypeSubst.t t =
+    let open Let_syntax in
+    match t1s, t2s with
+    | [], [] -> return TypeSubst.null
+    | t1 :: t1rest, t2 :: t2rest ->
+        let%bind subst1 = unify t1 t2 in
+        let%bind subst2 = unify_many t1rest t2rest in
+        return (TypeSubst.compose subst2 subst1)
+    | _ -> except (UnequalLengths (t1s, t2s))
 
   (** Solve for a substitution given a list of type constraints *)
-  let rec solve (subst: TypeSubst.t) (constraints: (Type.t * Type.t) List.t) : (TypeSubst.t, Error.t) Result.t =
-    let open Result.Let_syntax in
+  let rec solve (subst: TypeSubst.t) (constraints: (Type.t * Type.t) List.t) : TypeSubst.t t =
+    let open Let_syntax in
     match constraints with
     | [] -> return subst
     | (t1, t2) :: rest ->
@@ -181,14 +267,14 @@ module Solve = struct
       solve (TypeSubst.compose subst1 subst) rest1
 
   (** Solve for a type given a list of constraints *)
-  let run_solve t constraints : (Type.t, Error.t) Result.t =
+  let run_solve (s : TypeVarState.t) (t: Type.t) constraints : (Type.t, Error.t) Result.t =
     let open Result.Let_syntax in
-    let%bind subst = solve TypeSubst.null constraints in
+    let%bind (subst, _) = runStateT (solve TypeSubst.null constraints) s in
     return (TypeSubst.type_apply subst t)
 end
 
 (** Infer a type from an expression *)
 let run env expr : (Type.t, Error.t) Result.t =
   let open Result.Let_syntax in
-  let%bind (t, constraints) = Infer.run_infer env expr in
-  Solve.run_solve t constraints
+  let%bind (t, s, constraints) = Infer.run_infer env expr in
+  Solve.run_solve s t constraints
