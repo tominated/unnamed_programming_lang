@@ -89,6 +89,13 @@ module RWST
     )
   end
 
+module Error = struct
+  type t =
+    | UnboundVariable of string
+    | InfiniteType of string * Type.t
+    | Unimplemented of string
+end
+
 module Infer = struct
   module R = struct
     type t = TypeEnv.t
@@ -104,15 +111,10 @@ module Infer = struct
     type t = int
   end
 
-  type error = [
-    | `UnboundVariable of string
-    | `Unimplemented of string
-  ]
-
   module InferResult = struct
 
     module T = struct
-      type 'a t = ('a, error) Result.t
+      type 'a t = ('a, Error.t) Result.t
       let bind x ~f = Result.bind ~f x
       let return x = Ok x
       let map = `Custom Result.map
@@ -137,7 +139,7 @@ module Infer = struct
     let%bind _ = put (x + 1) in
     return (TypeVar (Printf.sprintf "t%d" x) |> locate)
 
-  let except (e: error) = lift (Error e)
+  let except (e: Error.t) = lift (Error e)
 
   let instantiate (Forall (vars, t)) =
     let open Let_syntax in
@@ -150,7 +152,7 @@ module Infer = struct
     let open Let_syntax in
     let%bind env = ask in
     match TypeEnv.lookup env id with
-    | None -> except (`UnboundVariable id)
+    | None -> except (UnboundVariable id)
     | Some scheme -> instantiate scheme
 
   let rec infer (e: expression) : Type.t t =
@@ -181,7 +183,7 @@ module Infer = struct
         let%bind body_type = inEnv id scheme (infer body) in
         return body_type
       end
-      | _ -> except (`Unimplemented "other patterns")
+      | _ -> except (Unimplemented "other patterns")
     end
 
     | ExprRecordEmpty -> return (TypeRecord (TypeInfer.locate TypeRowEmpty) |> TypeInfer.locate)
@@ -197,22 +199,18 @@ module Infer = struct
         TypeRecord (TypeRowExtend (label, field_t, rest_t) |> TypeInfer.locate) |> TypeInfer.locate
         |> return
 
-    | _ -> lift (Error (`Unimplemented "nice"))
+    | _ -> lift (Error (Unimplemented "nice"))
 
-  let runInfer env expr : ((Type.t * W.t), [> error]) Result.t =
+  let runInfer env expr : ((Type.t * W.t), Error.t) Result.t =
     let open Result.Let_syntax in
     let%bind (t, _, constraints) = runRWST (infer expr) env 0 in
     return (t, constraints)
 end
 
 module Solve = struct
-  type error = [
-    | `InfiniteType of string
-    | `Unimplemented of string
-  ]
 
   (** Given a type variable's name, and another type, get the substitutions *)
-  let var_bind name t : (TypeSubst.t, [> error]) Result.t =
+  let var_bind name t : (TypeSubst.t, Error.t) Result.t =
     match (name, t.item) with
     (* If name is the same as a TypeVar then we don't know any substitutions *)
     | name, TypeVar m when String.equal name m ->
@@ -220,18 +218,18 @@ module Solve = struct
 
     (* If name is found in the free type variables of t, then it fails the occurs check *)
     | name, _ when Set.mem (Type.free_type_vars t) name ->
-        Error (`InfiniteType name)
+        Error (InfiniteType (name, t))
 
     (* Otherwise substitute name with the type *)
     | _ -> Ok (TypeSubst.singleton name t)
 
-  let rec unify (t1: Type.t) (t2: Type.t) : (TypeSubst.t, [> error]) Result.t =
+  let rec unify (t1: Type.t) (t2: Type.t) : (TypeSubst.t, Error.t) Result.t =
     match (t1.item, t1.item) with
     | (TypeVar v, _) -> var_bind v t2
     | (_, TypeVar v) -> var_bind v t1
-    | _ -> Error (`Unimplemented "unifies")
+    | _ -> Error (Unimplemented "unifies")
 
-  and unifyMany (ts: (Type.t * Type.t) List.t) : (TypeSubst.t, [> error]) Result.t =
+  and unifyMany (ts: (Type.t * Type.t) List.t) : (TypeSubst.t, Error.t) Result.t =
     let open Result.Let_syntax in
     match ts with
     | [] -> return TypeSubst.null
@@ -240,7 +238,7 @@ module Solve = struct
       let%bind subst2 = unifyMany rest in
       return (TypeSubst.compose subst2 subst1)
 
-  let rec solve (subst: TypeSubst.t) (constraints: (Type.t * Type.t) List.t) : (TypeSubst.t, [> error]) Result.t =
+  let rec solve (subst: TypeSubst.t) (constraints: (Type.t * Type.t) List.t) : (TypeSubst.t, Error.t) Result.t =
     let open Result.Let_syntax in
     match constraints with
     | [] -> return subst
@@ -251,13 +249,13 @@ module Solve = struct
       ) rest in
       solve (TypeSubst.compose subst1 subst) rest1
 
-  let runSolve t constraints : (Type.t, [> error]) Result.t =
+  let runSolve t constraints : (Type.t, Error.t) Result.t =
     let open Result.Let_syntax in
     let%bind subst = solve TypeSubst.null constraints in
     return (TypeSubst.type_apply subst t)
 end
 
-let run env expr : (Type.t, [> Infer.error | Solve.error]) Result.t =
+let run env expr : (Type.t, Error.t) Result.t =
   let open Result.Let_syntax in
   let%bind (t, constraints) = Infer.runInfer env expr in
   Solve.runSolve t constraints
