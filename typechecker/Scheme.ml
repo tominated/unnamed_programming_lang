@@ -3,6 +3,8 @@ open Ast.Syntax
 
 type t = scheme
 
+let from_type (t: Type.t) : t = Forall ([], t)
+
 let free_type_vars (scheme: t): Set.M(String).t =
   match scheme with
   | Forall (vars, t) ->
