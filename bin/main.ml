@@ -38,15 +38,14 @@ let type_env =
 
 let parse lexbuf =
   match (Parser.parse_expression lexbuf) with
-  | Ok e ->
-    (match (TypeInfer.infer_type { kind_env; type_env } e) with
+  | Ok e -> begin
+    match Test.run type_env e with
     | Ok t ->
       let expr_str = Syntax.expression_to_string e in
       let type_str = Syntax.type_signature_to_string t in
       Stdio.printf "    %s\n    %s\n" expr_str type_str
-    | Error err -> Stdio.print_endline (TypeInfer.err_to_string err)
-    )
-
+    | Error err -> Stdio.print_endline (Test.Error.to_string err)
+    end
   | Error msg -> msg |> Stdio.print_endline
 
 let rec loop () =
