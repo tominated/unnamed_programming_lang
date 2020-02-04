@@ -7,6 +7,8 @@ let null : t = Map.empty (module String)
 
 let singleton s t : t = Map.singleton (module String) s t
 
+let of_alist_exn xs : t = Map.of_alist_exn (module String) xs
+
 let mem s k : bool = Map.mem s k
 
 let to_string (s: t) : string =

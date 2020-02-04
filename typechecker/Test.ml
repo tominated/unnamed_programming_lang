@@ -16,7 +16,7 @@ module ListM = functor(A: sig type t end) -> (
 )
 
 module type RWS = sig
-  include Monad.Basic
+  include Monad.S
 
   type r
   val ask : r t
@@ -49,13 +49,13 @@ module RWST
   and type w = W.t
   and type s = S.t
   and type 'a m = 'a M.t = struct
-    type 'a t = RWST of (R.t -> S.t -> ('a * S.t * W.t) M.t)
+    type 'a t_ = RWST of (R.t -> S.t -> ('a * S.t * W.t) M.t)
+    type 'a t = 'a t_
     let unRWST (RWST f) = f
 
     let runRWST a r s = (unRWST a) r s
 
     (* Monad *)
-    let map = `Define_using_bind
     let return a = RWST (fun _ s -> M.return (a, s, W.empty))
     let bind m ~f:k = RWST (fun r s ->
       let open M.Let_syntax in
@@ -65,6 +65,13 @@ module RWST
       let%bind (b, s'', w') = f' r s' in
       return (b, s'', W.append w w')
     )
+
+    include Monad.Make(struct
+      type 'a t = 'a t_
+      let bind = bind
+      let return = return
+      let map = `Define_using_bind
+    end)
 
     (* MonadReader *)
     type r = R.t
@@ -92,7 +99,7 @@ module RWST
 
 module Infer = struct
   type error = [
-    | `UndefinedIdentifier of string
+    | `UnboundVariable of string
     | `Unimplemented of string
   ]
 
@@ -128,30 +135,39 @@ module Infer = struct
   module M = RWST (R) (W) (S) (InferResult)
   include M
 
-  module Let_syntax = struct
-    let return = return
-    let bind = bind
-  end
-
   let unify (t1: Type.t) (t2: Type.t) = tell [(t1, t2)]
 
   let inEnv id scheme m =
     local (fun e -> TypeEnv.extend e id scheme) m
 
   let fresh =
-    get |>
-      bind ~f:(fun x ->
-        put (x + 1)
-        |> bind ~f:(fun _ ->
-          return (TypeVar (Printf.sprintf "t%d" x) |> locate)
-        )
-      )
+    let open Let_syntax in
+    let%bind x = get in
+    let%bind _ = put (x + 1) in
+    return (TypeVar (Printf.sprintf "t%d" x) |> locate)
 
   let except (e: error) = lift (Error e)
 
+  let instantiate (Forall (vars, t)) =
+    let open Let_syntax in
+    let%bind new_vars = List.map ~f:(fun _ -> fresh) vars |> all in
+    let subst = TypeSubst.of_alist_exn (List.zip_exn vars new_vars) in
+    return (TypeSubst.type_apply subst t)
+
+
+  let lookup id =
+    let open Let_syntax in
+    let%bind env = ask in
+    match TypeEnv.lookup env id with
+    | None -> except (`UnboundVariable id)
+    | Some scheme -> instantiate scheme
+
   let rec infer (e: expression) : Type.t t =
+    let open Let_syntax in
     match e.item with
     | ExprUnit -> return (TypeUnit |> TypeInfer.locate)
+
+    | ExprIdent id -> lookup id
 
     | ExprFn (arg, body) ->
         let%bind tv = fresh in
@@ -176,6 +192,19 @@ module Infer = struct
       end
       | _ -> except (`Unimplemented "other patterns")
     end
+
+    | ExprRecordEmpty -> return (TypeRecord (TypeInfer.locate TypeRowEmpty) |> TypeInfer.locate)
+
+    | ExprRecordExtend (label, expr, rest) ->
+        let%bind field_t = fresh in
+        let%bind rest_t = fresh in
+        let record_rest_t = TypeRecord rest_t |> TypeInfer.locate in
+        let%bind expr_t = infer expr in
+        let%bind rest_t = infer rest in
+        let%bind _ = unify field_t expr_t in
+        let%bind _ = unify record_rest_t rest_t in
+        TypeRecord (TypeRowExtend (label, field_t, rest_t) |> TypeInfer.locate) |> TypeInfer.locate
+        |> return
 
     | _ -> lift (Error (`Unimplemented "nice"))
 end
