@@ -1,4 +1,5 @@
 open Base
+open Stdio
 open Ast.Syntax
 
 module Error = struct
@@ -43,6 +44,21 @@ end
 
 module TypeVarState = struct
   type t = int
+
+  let letters = [| 
+    'a'; 'b'; 'c'; 'd'; 'e'; 'f'; 'g'; 'h'; 'i'; 'j'; 'k'; 'l'; 'm';
+    'n'; 'o'; 'p'; 'q'; 'r'; 's'; 't'; 'u'; 'v'; 'w'; 'x'; 'y'; 'z';
+  |]
+  let num_letters = Array.length letters
+  let as_id n =
+    let num_iters = n / num_letters in
+    let char = Array.get letters (n % num_letters) in
+    if num_iters > 0
+    then Printf.sprintf "%c%i" char num_iters
+    else Printf.sprintf "%c" char
+  
+  let as_type n =
+    TypeVar (as_id n) |> locate
 end
 
 module Infer = struct
@@ -71,7 +87,7 @@ module Infer = struct
     let open Let_syntax in
     let%bind x = get in
     let%bind _ = put (x + 1) in
-    return (TypeVar (Printf.sprintf "t%d" x) |> locate)
+    return (TypeVarState.as_type x)
 
   (** [except e] Lift an error in to the monad context *)
   let except (e: Error.t) = lift (Error e)
@@ -106,6 +122,12 @@ module Infer = struct
     match expr.item with
     | ExprUnit -> return (TypeUnit |> locate)
 
+    | ExprConstant const -> begin
+        match const with
+        | ConstNumber _ -> TypeIdent "Number" |> locate |> return
+        | ConstString _ -> TypeIdent "String" |> locate |> return
+      end
+
     | ExprIdent id -> lookup id
 
     | ExprFn (arg, body) ->
@@ -120,6 +142,15 @@ module Infer = struct
         let%bind _ = unify fn_type (TypeArrow (arg_type, rt_type) |> locate) in
         return rt_type
 
+    | ExprInfix (lhs, op, rhs) ->
+        let%bind rt_t = fresh in
+        let%bind lhs_t = infer lhs in
+        let%bind rhs_t = infer rhs in
+        let%bind op_t = infer (ExprIdent op |> locate) in
+        let fn_t = TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate in
+        let%bind _ = unify fn_t op_t in
+        return rt_t
+
     | ExprValBinding (pattern, value, body) -> begin
       match pattern.item with
       | PatternVar id -> begin
@@ -131,6 +162,14 @@ module Infer = struct
       end
       | _ -> except (Unimplemented "other patterns")
     end
+
+    | ExprRecordAccess (expr, label) ->
+        let%bind field_t = fresh in
+        let%bind rest_t = fresh in
+        let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
+        let%bind expr_t = infer expr in
+        let%bind _ = unify record_t expr_t in
+        return field_t
 
     | ExprRecordEmpty -> return (TypeRecord (locate TypeRowEmpty) |> locate)
 
@@ -145,7 +184,14 @@ module Infer = struct
         TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate
         |> return
 
-    | _ -> except (Unimplemented "infer")
+    | ExprTuple _ -> except (Unimplemented "infer tuple")
+    | ExprAnnotated _ -> except (Unimplemented "infer annotated")
+    | ExprTypeBinding _ -> except (Unimplemented "infer type binding")
+    | ExprMatch _ -> except (Unimplemented "infer match")
+    | ExprIfElse _ -> except (Unimplemented "infer ifelse")
+    | ExprConstruct _ -> except (Unimplemented "infer construct")
+    | ExprArray _ -> except (Unimplemented "infer array")
+    | ExprSequence _ -> except (Unimplemented "infer sequence")
 
   (** [run_infer env expr] Infer a type and list of constraints for an expression *)
   let run_infer env expr : ((Type.t * TypeVarState.t * W.t), Error.t) Result.t =
@@ -164,7 +210,7 @@ module Solve = struct
     let open Let_syntax in
     let%bind x = get in
     let%bind _ = put (x + 1) in
-    return (TypeVar (Printf.sprintf "t%d" x) |> locate)
+    return (TypeVarState.as_type x)
 
   (** Given a type variable's name, and another type, get the substitutions *)
   let var_bind name t : TypeSubst.t t =
@@ -270,6 +316,7 @@ module Solve = struct
   let run_solve (s : TypeVarState.t) (t: Type.t) constraints : (Type.t, Error.t) Result.t =
     let open Result.Let_syntax in
     let%bind (subst, _) = runStateT (solve TypeSubst.null constraints) s in
+    Stdio.printf "\nsubstitutions\n%s\n" (TypeSubst.to_string subst);
     return (TypeSubst.type_apply subst t)
 end
 

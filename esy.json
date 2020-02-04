@@ -4,7 +4,7 @@
   "description": "",
   "license": "MIT",
   "esy": {
-    "build": "dune build"
+    "build": "dune build -p #{self.name}"
   },
   "scripts": {
     "test": "dune runtest",
