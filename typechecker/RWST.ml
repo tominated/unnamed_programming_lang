@@ -6,7 +6,7 @@ module type MONOID = sig
   val append : t -> t -> t
 end
 
-module type RWST = sig
+module type S = sig
   include Monad.S
 
   type r
@@ -31,8 +31,7 @@ module Make
   (R : sig type t end)
   (W : MONOID)
   (S : sig type t end)
-  (M : Monad.S) :
-  RWST
+  (M : Monad.S) : S
   with type r = R.t
   and type w = W.t
   and type s = S.t
@@ -46,12 +45,10 @@ module Make
 
     (* Monad *)
     let return a = RWST (fun _ s -> M.return (a, s, W.empty))
-    let bind m ~f:k = RWST (fun r s ->
+    let bind m ~f = RWST (fun r s ->
       let open M.Let_syntax in
-      let f = unRWST m in
-      let%bind (a, s', w) = f r s in
-      let f' = unRWST (k a) in
-      let%bind (b, s'', w') = f' r s' in
+      let%bind (a, s', w) = (unRWST m) r s in
+      let%bind (b, s'', w') = (unRWST (f a)) r s' in
       return (b, s'', W.append w w')
     )
 
