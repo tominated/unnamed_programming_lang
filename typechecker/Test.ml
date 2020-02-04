@@ -7,14 +7,6 @@ module type MONOID = sig
   val append : t -> t -> t
 end
 
-module ListM = functor(A: sig type t end) -> (
-  struct
-    type t = A.t List.t
-    let empty = []
-    let append a b = a @ b
-  end : MONOID with type t = A.t List.t
-)
-
 module type RWS = sig
   include Monad.S
 
@@ -98,28 +90,27 @@ module RWST
   end
 
 module Infer = struct
-  type error = [
-    | `UnboundVariable of string
-    | `Unimplemented of string
-  ]
-
   module R = struct
     type t = TypeEnv.t
   end
 
   module W = struct
-    include ListM (struct
-      type t = Type.t * Type.t
-    end)
-
-    let singleton (x: Type.t * Type.t) : t = [x]
+    type t = (Type.t * Type.t) List.t
+    let empty = []
+    let append a b = a @ b
   end
 
   module S = struct
     type t = int
   end
 
+  type error = [
+    | `UnboundVariable of string
+    | `Unimplemented of string
+  ]
+
   module InferResult = struct
+
     module T = struct
       type 'a t = ('a, error) Result.t
       let bind x ~f = Result.bind ~f x
@@ -207,4 +198,67 @@ module Infer = struct
         |> return
 
     | _ -> lift (Error (`Unimplemented "nice"))
+
+  let runInfer env expr : ((Type.t * W.t), [> error]) Result.t =
+    let open Result.Let_syntax in
+    let%bind (t, _, constraints) = runRWST (infer expr) env 0 in
+    return (t, constraints)
 end
+
+module Solve = struct
+  type error = [
+    | `InfiniteType of string
+    | `Unimplemented of string
+  ]
+
+  (** Given a type variable's name, and another type, get the substitutions *)
+  let var_bind name t : (TypeSubst.t, [> error]) Result.t =
+    match (name, t.item) with
+    (* If name is the same as a TypeVar then we don't know any substitutions *)
+    | name, TypeVar m when String.equal name m ->
+        Ok TypeSubst.null
+
+    (* If name is found in the free type variables of t, then it fails the occurs check *)
+    | name, _ when Set.mem (Type.free_type_vars t) name ->
+        Error (`InfiniteType name)
+
+    (* Otherwise substitute name with the type *)
+    | _ -> Ok (TypeSubst.singleton name t)
+
+  let rec unify (t1: Type.t) (t2: Type.t) : (TypeSubst.t, [> error]) Result.t =
+    match (t1.item, t1.item) with
+    | (TypeVar v, _) -> var_bind v t2
+    | (_, TypeVar v) -> var_bind v t1
+    | _ -> Error (`Unimplemented "unifies")
+
+  and unifyMany (ts: (Type.t * Type.t) List.t) : (TypeSubst.t, [> error]) Result.t =
+    let open Result.Let_syntax in
+    match ts with
+    | [] -> return TypeSubst.null
+    | (t1, t2) :: rest ->
+      let%bind subst1 = unify t1 t2 in
+      let%bind subst2 = unifyMany rest in
+      return (TypeSubst.compose subst2 subst1)
+
+  let rec solve (subst: TypeSubst.t) (constraints: (Type.t * Type.t) List.t) : (TypeSubst.t, [> error]) Result.t =
+    let open Result.Let_syntax in
+    match constraints with
+    | [] -> return subst
+    | (t1, t2) :: rest ->
+      let%bind subst1 = unify t1 t2 in
+      let rest1 = List.map ~f:(fun (t1', t2') ->
+        (TypeSubst.type_apply subst1 t1', TypeSubst.type_apply subst1 t2')
+      ) rest in
+      solve (TypeSubst.compose subst1 subst) rest1
+
+  let runSolve t constraints : (Type.t, [> error]) Result.t =
+    let open Result.Let_syntax in
+    let%bind subst = solve TypeSubst.null constraints in
+    return (TypeSubst.type_apply subst t)
+end
+
+let run env expr : (Type.t, [> Infer.error | Solve.error]) Result.t =
+  let open Result.Let_syntax in
+  let%bind (t, constraints) = Infer.runInfer env expr in
+  Solve.runSolve t constraints
+
