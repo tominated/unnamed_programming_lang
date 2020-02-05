@@ -47,7 +47,6 @@ let env_apply (subs: t) (env: TypeEnv.t) : TypeEnv.t =
     env |> Map.map ~f:(scheme_apply subs)
 
 let compose (s1: t) (s2: t) : t =
-  Map.merge
-    ~f:(fun ~key:_ x -> match x with `Left v | `Right v | `Both (_, v) -> Some v)
-    (Map.map ~f:(type_apply s1) s2)
-    s1
+  Map.merge s1 s2 ~f:(fun ~key:_ x ->
+    match x with `Left v | `Right v | `Both (_, v) -> Some (type_apply s1 v)
+  )

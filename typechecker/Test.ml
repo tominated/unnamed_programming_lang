@@ -1,5 +1,4 @@
 open Base
-open Stdio
 open Ast.Syntax
 
 module Error = struct
@@ -12,7 +11,7 @@ module Error = struct
     | RecursiveRowType
     | UnexpectedType of Type.t
     | Unimplemented of string
-  
+
   let to_string = function
   | UnboundVariable id -> Printf.sprintf "Variable '%s' not found" id
   | InfiniteType _ -> "Infinite Type"
@@ -45,7 +44,7 @@ end
 module TypeVarState = struct
   type t = int
 
-  let letters = [| 
+  let letters = [|
     'a'; 'b'; 'c'; 'd'; 'e'; 'f'; 'g'; 'h'; 'i'; 'j'; 'k'; 'l'; 'm';
     'n'; 'o'; 'p'; 'q'; 'r'; 's'; 't'; 'u'; 'v'; 'w'; 'x'; 'y'; 'z';
   |]
@@ -56,7 +55,7 @@ module TypeVarState = struct
     if num_iters > 0
     then Printf.sprintf "%c%i" char num_iters
     else Printf.sprintf "%c" char
-  
+
   let as_type n =
     TypeVar (as_id n) |> locate
 end
@@ -99,7 +98,7 @@ module Infer = struct
     let%bind new_vars = List.map ~f:(fun _ -> fresh) vars |> all in
     let subst = TypeSubst.of_alist_exn (List.zip_exn vars new_vars) in
     return (TypeSubst.type_apply subst t)
-  
+
   (** [generalise env t] Turn a monotype to a polytype by promoting free
       variables not in the environment to the scheme *)
   let generalise (env: TypeEnv.t) (t: Type.t) : Scheme.t =
@@ -256,7 +255,7 @@ module Solve = struct
   (** Attempt to find a substitution that unifies 2 types *)
   let rec unify (t1: Type.t) (t2: Type.t) : TypeSubst.t t =
     let open Let_syntax in
-    match (t1.item, t1.item) with
+    match (t1.item, t2.item) with
     | TypeVar v, _ -> var_bind v t2
     | _, TypeVar v -> var_bind v t1
 
@@ -316,7 +315,6 @@ module Solve = struct
   let run_solve (s : TypeVarState.t) (t: Type.t) constraints : (Type.t, Error.t) Result.t =
     let open Result.Let_syntax in
     let%bind (subst, _) = runStateT (solve TypeSubst.null constraints) s in
-    Stdio.printf "\nsubstitutions\n%s\n" (TypeSubst.to_string subst);
     return (TypeSubst.type_apply subst t)
 end
 
