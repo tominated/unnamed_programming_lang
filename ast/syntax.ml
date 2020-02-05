@@ -14,8 +14,7 @@ type constant =
   | ConstString of string
 
 (** A type signature *)
-and type_signature = type_signature_ located
-and type_signature_ =
+and type_signature =
   | TypeUnit
   (* () *)
   | TypeVar of string
@@ -104,7 +103,7 @@ and expression_ =
   (* E1; E2 *)
 
 let rec type_signature_to_string ts =
-  match ts.item with
+  match ts with
   | TypeUnit -> "()"
   | TypeVar x -> x
   | TypeIdent x -> x

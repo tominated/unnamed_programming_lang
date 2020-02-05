@@ -3,8 +3,7 @@ open Ast.Syntax
 
 type t = type_signature
 
-let rec free_type_vars (t: t) : Set.M(String).t =
-  match t.item with
+let rec free_type_vars = function
   | TypeVar a -> Set.singleton (module String) a
   | TypeArrow (t1, t2) ->
       Set.union (free_type_vars t1) (free_type_vars t2)

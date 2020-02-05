@@ -20,8 +20,8 @@
 
   let record_type (fields: (string * type_signature) list) (ext: type_signature option) =
     let row = Base.List.fold_right
-      ~init:(Base.Option.value ~default:(dummy TypeRowEmpty) ext)
-      ~f:(fun (label, t) acc -> TypeRowExtend (label, t, acc) |> dummy)
+      ~init:(Base.Option.value ~default:TypeRowEmpty ext)
+      ~f:(fun (label, t) acc -> TypeRowExtend (label, t, acc))
       fields
     in TypeRecord row
 
@@ -119,12 +119,12 @@ record_expr_base:
 
 (* A single variant definition *)
 variant_def:
-  | "|" id=UIDENT args=l(type_signature)* { (id, args) }
+  | "|" id=UIDENT args=type_signature* { (id, args) }
 
 (* A type signature or variant to be bound *)
 type_binding:
   | vs=variant_def+ { TypeBindVariant vs }
-  | t=l(type_signature) { TypeBindAtomic t }
+  | t=type_signature { TypeBindAtomic t }
 
 (* An unambiguous expression *)
 atomic_expr:
@@ -165,15 +165,15 @@ expr:
 (** Type Signatures *)
 
 parse_type_signature:
-  | t=l(type_signature) EOF { t }
+  | t=type_signature EOF { t }
 
 type_signature:
   | t=atomic_type { t }
-  | lhs=l(atomic_type) "->" rhs=l(type_signature) { TypeArrow (lhs, rhs) }
-  | t=l(atomic_type) ts=nonempty_list(l(atomic_type)) { TypeConstructor (t, ts) }
+  | lhs=atomic_type "->" rhs=type_signature { TypeArrow (lhs, rhs) }
+  | t=atomic_type ts=nonempty_list(atomic_type) { TypeConstructor (t, ts) }
 
 atomic_type:
-  | "(" ts=separated_nontrivial_llist(",", l(atomic_type)) ")" { TypeTuple ts }
+  | "(" ts=separated_nontrivial_llist(",", atomic_type) ")" { TypeTuple ts }
   | "{" fs=record_field_type_signature+ ext=record_extend_type_signature? "}"
       { record_type fs ext }
   | "(" t=type_signature ")" { t }
@@ -181,10 +181,10 @@ atomic_type:
   | UIDENT { TypeIdent $1 }
 
 record_field_type_signature:
-  | id=LIDENT ":" t=l(type_signature) { (id, t) }
+  | id=LIDENT ":" t=type_signature { (id, t) }
 
 record_extend_type_signature:
-  | "|" t=l(atomic_type) { t }
+  | "|" t=atomic_type { t }
 
 (* Scheme *)
 
@@ -192,7 +192,7 @@ parse_scheme:
   | s=scheme EOF { s }
 
 scheme:
-  | FORALL vars=LIDENT* DOT t=l(type_signature) { Forall (vars, t) }
+  | FORALL vars=LIDENT* DOT t=type_signature { Forall (vars, t) }
 
 (* STOLEN FROM OCAML SOURCE *)
 (* https://github.com/ocaml/ocaml/blob/trunk/parsing/parser.mly *)

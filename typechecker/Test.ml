@@ -1,4 +1,6 @@
 open Base
+open Stdio
+
 open Ast.Syntax
 
 module Error = struct
@@ -25,8 +27,6 @@ module Error = struct
   | UnexpectedType t -> Printf.sprintf "Unexpected type '%s'" (Type.to_string t)
   | Unimplemented s -> Printf.sprintf "Unimplemented: %s" s
 end
-
-let locate (p: 'a) : 'a located = { item = p; location = (Lexing.dummy_pos, Lexing.dummy_pos) }
 
 module InferResult = struct
   module T = struct
@@ -56,8 +56,7 @@ module TypeVarState = struct
     then Printf.sprintf "%c%i" char num_iters
     else Printf.sprintf "%c" char
 
-  let as_type n =
-    TypeVar (as_id n) |> locate
+  let as_type n = TypeVar (as_id n)
 end
 
 module Infer = struct
@@ -75,7 +74,9 @@ module Infer = struct
   include InferRWST
 
   (** [unify t1 t2] Add a type constraint to the monad context *)
-  let unify (t1: Type.t) (t2: Type.t) = tell [(t1, t2)]
+  let unify (t1: Type.t) (t2: Type.t) =
+    Stdio.printf "constraint: (%s) == (%s)\n" (Type.to_string t1) (Type.to_string t2);
+    tell [(t1, t2)]
 
   (** [in_env] Get a new monad with a variable binding in its env *)
   let in_env id scheme m =
@@ -99,6 +100,29 @@ module Infer = struct
     let subst = TypeSubst.of_alist_exn (List.zip_exn vars new_vars) in
     return (TypeSubst.type_apply subst t)
 
+  let%test_module "instantiate" = (module struct
+    let run_test scheme =
+      Result.iter
+        ~f:(fun (t, _, _) -> Stdio.print_endline (Type.to_string t))
+        (runRWST (instantiate scheme) TypeEnv.empty 0)
+    
+    let%expect_test "creates a new type" =
+      let scheme = Forall ([], TypeVar "a") in
+      run_test scheme;
+      [%expect {| a |}]
+    
+    let%expect_test "creates a type with vars" =
+      let scheme = Forall (["a"; "b"; "c"], TypeVar "a") in
+      run_test scheme;
+      [%expect {| a |}]
+    
+    let%expect_test "creates an arrow type with vars" =
+      let arrow = TypeArrow (TypeVar "a", TypeArrow (TypeVar "b", TypeIdent "Number")) in
+      let scheme = Forall (["a"; "b"], arrow) in
+      run_test scheme;
+      [%expect {| (a -> (b -> Number)) |}]
+  end)
+
   (** [generalise env t] Turn a monotype to a polytype by promoting free
       variables not in the environment to the scheme *)
   let generalise (env: TypeEnv.t) (t: Type.t) : Scheme.t =
@@ -119,38 +143,46 @@ module Infer = struct
   let rec infer (expr: expression) : Type.t t =
     let open Let_syntax in
     match expr.item with
-    | ExprUnit -> return (TypeUnit |> locate)
+    | ExprUnit -> return TypeUnit
 
-    | ExprConstant const -> begin
-        match const with
-        | ConstNumber _ -> TypeIdent "Number" |> locate |> return
-        | ConstString _ -> TypeIdent "String" |> locate |> return
-      end
+    | ExprConstant const ->
+        Stdio.print_endline "infer const";
+        return begin
+          match const with
+          | ConstNumber _ -> TypeIdent "Number"
+          | ConstString _ -> TypeIdent "String"
+        end
 
-    | ExprIdent id -> lookup id
+    | ExprIdent id ->
+        Stdio.print_endline "infer ident";
+        lookup id
 
     | ExprFn (arg, body) ->
+        Stdio.print_endline "infer fn";
         let%bind tv = fresh in
         let%bind t = in_env arg (Scheme.from_type tv) (infer body) in
-        return (TypeArrow (tv, t) |> locate)
+        return (TypeArrow (tv, t))
 
     | ExprApply (fn, arg) ->
+        Stdio.print_endline "infer apply";
         let%bind fn_type = infer fn in
         let%bind arg_type = infer arg in
         let%bind rt_type = fresh in
-        let%bind _ = unify fn_type (TypeArrow (arg_type, rt_type) |> locate) in
+        let%bind _ = unify fn_type (TypeArrow (arg_type, rt_type)) in
         return rt_type
 
     | ExprInfix (lhs, op, rhs) ->
+        Stdio.print_endline "infer infix";
         let%bind rt_t = fresh in
         let%bind lhs_t = infer lhs in
         let%bind rhs_t = infer rhs in
-        let%bind op_t = infer (ExprIdent op |> locate) in
-        let fn_t = TypeArrow (lhs_t, (TypeArrow (rhs_t, rt_t) |> locate)) |> locate in
+        let%bind op_t = lookup op in
+        let fn_t = TypeArrow (lhs_t, TypeArrow (rhs_t, rt_t)) in
         let%bind _ = unify fn_t op_t in
         return rt_t
 
     | ExprValBinding (pattern, value, body) -> begin
+      Stdio.print_endline "infer let";
       match pattern.item with
       | PatternVar id -> begin
         let%bind env = ask in
@@ -163,25 +195,30 @@ module Infer = struct
     end
 
     | ExprRecordAccess (expr, label) ->
+        Stdio.print_endline "infer record access";
         let%bind field_t = fresh in
         let%bind rest_t = fresh in
-        let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate in
+        let record_t = TypeRecord (TypeRowExtend (label, field_t, rest_t)) in
         let%bind expr_t = infer expr in
         let%bind _ = unify record_t expr_t in
         return field_t
 
-    | ExprRecordEmpty -> return (TypeRecord (locate TypeRowEmpty) |> locate)
+    | ExprRecordEmpty ->
+        Stdio.print_endline "infer record empty";
+        return (TypeRecord TypeRowEmpty)
 
     | ExprRecordExtend (label, value, rest) ->
+        Stdio.print_endline "infer record extend";
         let%bind field_t = fresh in
         let%bind rest_t = fresh in
-        let record_rest_t = TypeRecord rest_t |> locate in
+        let param1_t = field_t in
+        let param2_t = TypeRecord rest_t in
+        let rt_t = TypeRecord (TypeRowExtend (label, field_t, rest_t)) in
         let%bind value_t = infer value in
+        let%bind _ = unify param1_t value_t in
         let%bind rest_t = infer rest in
-        let%bind _ = unify field_t value_t in
-        let%bind _ = unify record_rest_t rest_t in
-        TypeRecord (TypeRowExtend (label, field_t, rest_t) |> locate) |> locate
-        |> return
+        let%bind _ = unify param2_t rest_t in
+        return rt_t
 
     | ExprTuple _ -> except (Unimplemented "infer tuple")
     | ExprAnnotated _ -> except (Unimplemented "infer annotated")
@@ -213,7 +250,8 @@ module Solve = struct
 
   (** Given a type variable's name, and another type, get the substitutions *)
   let var_bind name t : TypeSubst.t t =
-    match (name, t.item) with
+    Stdio.printf "var_bind %s to %s\n" name (Type.to_string t);
+    match (name, t) with
     (* If name is the same as a TypeVar then we don't know any substitutions *)
     | name, TypeVar m when String.equal name m ->
         return TypeSubst.null
@@ -225,27 +263,56 @@ module Solve = struct
     (* Otherwise substitute name with the type *)
     | _ -> return (TypeSubst.singleton name t)
 
+  let%test_module "var_bind" = (module struct
+    let%expect_test "does not substitute when name and type are equal" =
+      Result.iter
+        ~f:(fun (t, _) -> Stdio.print_endline (TypeSubst.to_string t))
+        (runStateT (var_bind "x" (TypeVar "x")) 0);
+      [%expect {| |}]
+    
+    let%expect_test "x can be substitued for an identifier" =
+      Result.iter
+        ~f:(fun (t, _) -> Stdio.print_endline (TypeSubst.to_string t))
+        (runStateT (var_bind "x" (TypeIdent "Int")) 0);
+      [%expect {| x = Int |}]
+    
+    let%expect_test "x can be substitued for another variable" =
+      Result.iter
+        ~f:(fun (t, _) -> Stdio.print_endline (TypeSubst.to_string t))
+        (runStateT (var_bind "x" (TypeVar "y")) 0);
+      [%expect {| x = y |}]
+    
+    let%expect_test "free type variables return error" =
+      let t = TypeArrow (TypeVar "x",TypeVar "y") in
+      Result.iter_error
+        ~f:(fun e -> e |> Error.to_string |> Stdio.print_endline)
+        (runStateT (var_bind "x" t) 0);
+      [%expect {| Infinite Type |}]
+  end)
+
   type rewrite = { field: Type.t; tail: Type.t; subst: TypeSubst.t }
   let rec rewrite_row (row2: Type.t) (label1: string) : rewrite t =
+    Stdio.printf "rewrite row: '%s' in %s\n" label1 (Type.to_string row2);
     let open Let_syntax in
-    match row2.item with
+    match row2 with
+    | TypeRecord t -> rewrite_row t label1
     | TypeRowExtend (label, field, tail) when String.equal label1 label ->
         return { field; tail; subst = TypeSubst.null }
     | TypeRowExtend (label, field, tail) -> begin
-        match tail.item with
+        match tail with
         | TypeVar alpha ->
             let%bind beta = fresh in
             let%bind gamma = fresh in
             return {
               field = gamma;
-              tail = TypeRowExtend (label, field, beta) |> locate;
-              subst = TypeSubst.singleton alpha (TypeRowExtend (label1, gamma, beta) |> locate)
+              tail = TypeRowExtend (label, field, beta);
+              subst = TypeSubst.singleton alpha (TypeRowExtend (label1, gamma, beta))
             }
         | _ ->
             let%bind {field = field'; tail = tail'; subst} = rewrite_row tail label1 in
             return {
               field = field';
-              tail = TypeRowExtend (label, field, tail') |> locate;
+              tail = TypeRowExtend (label, field, tail');
               subst
             }
       end
@@ -254,8 +321,9 @@ module Solve = struct
 
   (** Attempt to find a substitution that unifies 2 types *)
   let rec unify (t1: Type.t) (t2: Type.t) : TypeSubst.t t =
+    Stdio.printf "unify (%s) == (%s)\n" (Type.to_string t1) (Type.to_string t2);
     let open Let_syntax in
-    match (t1.item, t2.item) with
+    match (t1, t2) with
     | TypeVar v, _ -> var_bind v t2
     | _, TypeVar v -> var_bind v t1
 
@@ -273,8 +341,8 @@ module Solve = struct
 
     | TypeRowExtend (label1, field1, tail1), TypeRowExtend (_, _, _) -> begin
         let%bind { field = field2; tail = tail2; subst = subst1 } = rewrite_row t2 label1 in
-        match tail2.item with
-        | TypeRowExtend(_, _, { item = TypeVar tv; _ }) when TypeSubst.mem subst1 tv ->
+        match tail2 with
+        | TypeRowExtend(_, _, TypeVar tv) when TypeSubst.mem subst1 tv ->
             except RecursiveRowType
         | _ ->
           let%bind subst2 = unify (TypeSubst.type_apply subst1 field1) (TypeSubst.type_apply subst1 field2) in
@@ -301,6 +369,7 @@ module Solve = struct
 
   (** Solve for a substitution given a list of type constraints *)
   let rec solve (subst: TypeSubst.t) (constraints: (Type.t * Type.t) List.t) : TypeSubst.t t =
+    Stdio.printf "subst: %s\n" (TypeSubst.to_string subst);
     let open Let_syntax in
     match constraints with
     | [] -> return subst

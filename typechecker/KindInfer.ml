@@ -1,3 +1,4 @@
+(*
 open Base
 
 open Result.Let_syntax
@@ -117,3 +118,4 @@ let%test_module "infer_kind" = (module struct
     |> Result.iter ~f:Stdio.print_endline;
     [%expect {| Type |}]
 end)
+*)

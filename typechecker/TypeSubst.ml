@@ -17,24 +17,13 @@ let to_string (s: t) : string =
   |> String.concat ~sep:", "
 
 let rec type_apply (subst: t) (t: Type.t) : Type.t =
-  match t.item with
-  | TypeVar v ->
-    Map.find subst v |> Option.value ~default:t
-  | TypeArrow (t1, t2) -> { t with
-      item = TypeArrow (type_apply subst t1, type_apply subst t2);
-    }
-  | TypeTuple ts -> { t with
-      item = TypeTuple (List.map ~f:(type_apply subst) ts);
-    }
-  | TypeConstructor (n, ts) -> { t with
-      item = TypeConstructor (n, List.map ~f:(type_apply subst) ts);
-    }
-  | TypeRecord row -> { t with
-      item = TypeRecord (type_apply subst row);
-    }
-  | TypeRowExtend (l, t, r) -> { t with
-      item = TypeRowExtend (l, type_apply subst t, type_apply subst r);
-    }
+  match t with
+  | TypeVar v -> Map.find subst v |> Option.value ~default:t
+  | TypeArrow (t1, t2) -> TypeArrow (type_apply subst t1, type_apply subst t2)
+  | TypeTuple ts -> TypeTuple (List.map ~f:(type_apply subst) ts)
+  | TypeConstructor (n, ts) -> TypeConstructor (n, List.map ~f:(type_apply subst) ts)
+  | TypeRecord row -> TypeRecord (type_apply subst row)
+  | TypeRowExtend (l, t, r) -> TypeRowExtend (l, type_apply subst t, type_apply subst r)
   | _ -> t
 
 let scheme_apply (subs: t) (scheme: Scheme.t) : Scheme.t =
