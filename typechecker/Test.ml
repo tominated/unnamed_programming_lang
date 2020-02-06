@@ -128,7 +128,7 @@ module Infer = struct
   let generalise (env: TypeEnv.t) (t: Type.t) : Scheme.t =
     let ftv_e = TypeEnv.free_type_vars env in
     let ftv_t = Type.free_type_vars t in
-    let vars = Set.diff ftv_t ftv_e |> Set.to_list in
+    let vars = Set.diff ftv_e ftv_t |> Set.to_list in
     Forall (vars, t)
 
   (** [lookup id] Look up a variable in the environment, and instantiate it *)
@@ -186,10 +186,9 @@ module Infer = struct
       match pattern.item with
       | PatternVar id -> begin
         let%bind env = ask in
-        let%bind value_type = infer value in
-        let scheme = generalise env value_type in
-        let%bind body_type = in_env id scheme (infer body) in
-        return body_type
+        let%bind value_t = infer value in
+        let scheme = generalise env value_t in
+        in_env id scheme (infer body)
       end
       | _ -> except (Unimplemented "other patterns")
     end
