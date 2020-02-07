@@ -2,6 +2,6 @@
  (public_name unnamed_programming_lang)
  (name main)
  (flags -rectypes)
- (libraries parser typechecker base stdio)
+ (libraries parser typechecker base stdio bidi)
  (preprocess
   (pps ppx_inline_test)))

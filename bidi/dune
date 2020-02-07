@@ -1,0 +1,6 @@
+(library
+ (inline_tests)
+ (name bidi)
+ (flags -rectypes)
+ (libraries base stdio)
+ (preprocess future_syntax))
